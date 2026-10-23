@@ -57,7 +57,7 @@ const weather = ref<Weather | null>(null),
   videoError = ref(false)
 // ---- 위험 지하차도 우회 / 가상 주행(시연용 GPS 시뮬레이션) ----
 const hazardNote = ref<{ kind: 'blocked' | 'advisory' | 'info'; text: string } | null>(null),
-  sim = ref(false),
+  sim = ref(true),
   simSpeed = ref(2),
   simPaused = ref(false),
   simAt = ref(0)
@@ -540,6 +540,7 @@ async function autoReroute(reason: string) {
 }
 function useDemoTrip(i: number) {
   const t = DEMO_TRIPS[i]!
+  sim.value = true
   origin.value = t.from
   originText.value = t.from.name
   destination.value = t.to
