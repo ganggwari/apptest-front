@@ -814,3 +814,13 @@ dialog.navigation-weather-dialog {
 .navigation-summary.summary-collapsed>:not(.navigation-summary-handle):not(.navigation-arrival) {
   display: none;
 }
+
+/* 시연 프리셋과 위험 우회 결과 */
+.navigation-demo-presets { margin: 12px 0; padding: 12px; border-radius: 12px; background: var(--surface, #fff); border: 1px solid var(--line, #ddd); }
+.navigation-demo-presets > strong { display: block; margin-bottom: 8px; font-size: 13px; }
+.navigation-demo-presets > div { display: flex; gap: 6px; flex-wrap: wrap; }
+.navigation-demo-presets button { padding: 8px 10px; border: 1px solid #8aa5be; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; font-size: 12px; }
+.navigation-demo-presets button:disabled { opacity: .5; cursor: not-allowed; }
+.navigation-hazard-note { padding: 11px 14px; margin: 8px 12px; border-radius: 10px; background: #fff4df; color: #6c3f0b; font-size: 13px; }
+.navigation-hazard-note[data-kind=blocked] { background: #ffe4e4; color: #9f2020; }
+.navigation-hazard-note[data-kind=info] { background: #e6f2ff; color: #174b7c; }

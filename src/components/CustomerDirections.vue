@@ -18,6 +18,8 @@ import {
   type Route,
   type Point,
   type Guide,
+  type HazardRoute,
+  toRoute,
 } from '../services/navigation'
 import { projectRoute, distanceMeters, formatDistance, routeTimeline } from '../utils/navigation-progress'
 import '../styles/customer-app-7.css'
@@ -50,6 +52,17 @@ const weather = ref<Weather | null>(null),
   infoLoading = ref(false),
   camera = ref<Camera | null>(null),
   videoError = ref(false)
+// 이전 테스트 앱의 시연 경로 프리셋 (좌표는 원본 그대로 유지)
+const DEMO_TRIPS: { label: string; from: Place; to: Place }[] = [
+  { label: '초량지하차도 경로', from: { name: '시연 출발(초량 북쪽)', lat: 35.1291, lng: 129.0452 }, to: { name: '시연 도착(초량 남쪽)', lat: 35.1091, lng: 129.0444 } },
+  { label: '북항지하차도 경로', from: { name: '시연 출발(북항 북쪽)', lat: 35.1331, lng: 129.0475 }, to: { name: '시연 도착(북항 남쪽)', lat: 35.1131, lng: 129.0467 } },
+  { label: '충장지하차도 경로', from: { name: '시연 출발(범일동)', lat: 35.138, lng: 129.064 }, to: { name: '시연 도착(남포동 방면)', lat: 35.104, lng: 129.038 } },
+]
+const hazardNote = ref<{ kind: 'blocked' | 'advisory' | 'info'; text: string } | null>(null)
+let hazardVersion: number | null = null
+let hazardPoll: number | undefined
+let rerouting = false
+
 const active = computed(() => routes.value[selected.value]),
   guides = computed(() => active.value?.sections.flatMap((section) => section.guides || []) || [])
 let sdk: any,
@@ -177,6 +190,32 @@ async function search() {
       { origin: coord(from), destination: coord(to) },
       current.signal,
     )
+    hazardNote.value = null
+    // /directions는 위험을 고려하지 않으므로 Spring /route 결과를 우선 반영한다.
+    // 서버가 인증/경로 탐색에 실패한 경우만 기본 경로를 유지한다.
+    try {
+      const hz = await navigationRequest<HazardRoute>(
+        'route', { origin: coord(from), destination: coord(to) }, current.signal,
+      )
+      if (hz.passesHazards?.length || hz.detoured) {
+        candidates.splice(0, candidates.length,
+          toRoute(hz, hz.detoured ? '위험 우회 경로' : '기본 경로'))
+        if (hz.suggestedDetour) {
+          candidates.push(toRoute(hz.suggestedDetour,
+            `선택 우회 (+${Math.ceil(hz.suggestedDetour.extraSec / 60)}분)`))
+        }
+        hazardNote.value = {
+          kind: hz.mandatory ? 'blocked' : 'advisory',
+          text: hz.message || (hz.mandatory
+            ? '위험 지하차도가 차단되어 우회 경로를 적용했습니다.'
+            : '위험 지하차도가 포함되어 있습니다. 아래에서 우회 경로를 선택할 수 있습니다.'),
+        }
+      }
+    } catch (e) {
+      if (current.signal.aborted) throw e
+      // 우회 API 실패 시 기본 길찾기를 제공하되 사용자에게 안전상 한계를 명확히 표시한다.
+      hazardNote.value = { kind: 'info', text: '위험 구간 확인에 실패했습니다. 표시된 경로는 위험 우회가 검증되지 않았습니다.' }
+    }
     if (!candidates.length) throw Error('이 구간에서 자동차 경로를 찾지 못했습니다.')
     if (!alive || current.signal.aborted) return
     routes.value = candidates
@@ -482,6 +521,71 @@ function editRoute() {
   editing.value = true
   searchExpanded.value = true
 }
+// SSE와 폴링을 병행해 주행 중 위험 단계 변경을 놓치지 않도록 한다.
+async function syncHazardVersion() {
+  try {
+    const state = await navigationRequest<{ version: number }>('hazards', {})
+    hazardVersion = state.version
+  } catch { /* 일시적인 API 오류는 다음 검사에서 재시도 */ }
+}
+async function checkHazards() {
+  if (!alive || rerouting || busy.value) return
+  try {
+    const state = await navigationRequest<{ version: number }>('hazards', {})
+    if (hazardVersion === null) { hazardVersion = state.version; return }
+    if (state.version === hazardVersion) return
+    hazardVersion = state.version
+    if (requested.value && position.value) await autoReroute()
+    else if (routes.value.length && origin.value && destination.value) void search()
+  } catch { /* 연결 복구 후 다시 검사 */ }
+}
+async function autoReroute() {
+  if (!position.value || !destination.value || rerouting) return
+  rerouting = true
+  const here = { ...position.value }
+  const wasDemo = drivingMode.value === 'demo'
+  const paused = demoPaused.value
+  const oldRoute = active.value
+  const oldOrigin = origin.value
+  const oldOriginText = originText.value
+  const oldPosition = position.value
+  try {
+    origin.value = { name: '현재 시연 위치', lat: here.lat, lng: here.lng }
+    originText.value = origin.value.name
+    await search()
+    if (routes.value.length) {
+      hazardNote.value = {
+        kind: 'info', text: `위험 상태가 변경되어 현재 위치에서 경로를 다시 탐색했습니다. ${hazardNote.value?.text || ''}`,
+      }
+      startNavigation()
+      if (wasDemo && paused) toggleDemoPause()
+    } else {
+      // 자동 재탐색 실패로 안내 화면이 비지 않도록 이전 경로를 복원한다.
+      if (oldRoute) routes.value = [oldRoute]
+      origin.value = oldOrigin
+      originText.value = oldOriginText
+      position.value = oldPosition
+      hazardNote.value = { kind: 'info', text: '재탐색에 실패했습니다. 안전 여부가 확인될 때까지 주행하지 마세요.' }
+      await nextTick()
+      draw()
+    }
+  } finally { rerouting = false }
+}
+function useDemoTrip(index: number) {
+  const trip = DEMO_TRIPS[index]
+  if (!trip) return
+  drivingMode.value = 'demo'
+  origin.value = { ...trip.from }
+  destination.value = { ...trip.to }
+  originText.value = trip.from.name
+  destinationText.value = trip.to.name
+  void search()
+}
+function onNavigationBackendEvent(event: Event) {
+  const name = (event as CustomEvent<{ name?: string }>).detail?.name
+  if (name === 'risk-level-change' || name === 'control-change' || name === 'data-changed') void checkHazards()
+}
+
 function reroute() {
   if (position.value) {
     origin.value = { name: '내 위치', lat: position.value.lat, lng: position.value.lng }
@@ -534,6 +638,9 @@ onBeforeUnmount(() => {
   infoDialog.value?.close()
 })
 onMounted(async () => {
+  window.addEventListener('routel-backend-event', onNavigationBackendEvent)
+  hazardPoll = window.setInterval(() => void checkHazards(), 4000)
+  void syncHazardVersion()
   try {
     sdk = await loadKakao()
     if (!alive || !mapHost.value) return
@@ -560,6 +667,8 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('routel-backend-event', onNavigationBackendEvent)
+  if (hazardPoll !== undefined) window.clearInterval(hazardPoll)
   disposeMapScroll?.()
   alive = false
   controller?.abort()
@@ -616,6 +725,11 @@ onBeforeUnmount(() => {
         </button
               ></div
           ><div id="navigation-search-fields" v-show="searchExpanded">
+          <div class="navigation-demo-presets" aria-label="시연 경로 선택">
+            <strong>시연 경로 바로 선택</strong>
+            <div><button v-for="(trip, index) in DEMO_TRIPS" :key="trip.label"
+              type="button" :disabled="busy" @click="useDemoTrip(index)">{{trip.label}}</button></div>
+          </div>
           <form class="directions-form" @submit.prevent="search"
             ><label
               >출발지<div
@@ -674,6 +788,7 @@ onBeforeUnmount(() => {
             ></div
           ></section
         >
+<p v-if="hazardNote" class="navigation-hazard-note" :data-kind="hazardNote.kind" role="status">{{hazardNote.text}}</p>
 <p v-if="mapError" class="navigation-map-error" role="status">{{mapError}}</p
         ><p v-if="gpsError" class="navigation-gps-error" role="alert">{{gpsError}}</p>
 <section ref="summaryElement" v-if="active" class="navigation-summary directions-results" :class="{'summary-collapsed':!summaryExpanded}" aria-label="경로 결과"
@@ -703,7 +818,7 @@ onBeforeUnmount(() => {
               type="button"
               :aria-pressed="selected===index"
               @click="chooseRoute(index)"
-              ><b>{{index===0?'추천':'대안'}} {{Math.ceil(route.summary.duration/60)}}분</b
+              ><b>{{route.label || (index===0?'추천':'대안')}} {{Math.ceil(route.summary.duration/60)}}분</b
               ><span
                 >{{formatDistance(route.summary.distance)}} · 통행료 {{route.summary.fare?.toll?.toLocaleString()??'—'}}원</span
               ></button
