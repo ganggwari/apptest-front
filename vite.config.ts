@@ -1,25 +1,52 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
-
-// 내비/장소/날씨/길찾기는 모두 Spring(/api/navigation/*, /api/weather)이 처리한다.
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '')
-  const proxy = {
-    '/tunnel-source': {
-      target: 'https://seoultunnel.co.kr',
-      changeOrigin: true,
-      rewrite: (path: string) => path.replace(/^\/tunnel-source/, '/usage'),
+import { navigationApi } from './server/navigation-api.mjs'
+export default defineConfig(({ mode }) => ({
+  plugins: [vue(), navigationApi(loadEnv(mode, '.', ''))],
+  server: {
+    host: 'localhost',
+    port: 8282,
+    strictPort: true,
+    proxy: {
+      '/tunnel-source': {
+        target: 'https://seoultunnel.co.kr',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/tunnel-source/, '/usage'),
+      },
+      '/control/plate': {
+        target: loadEnv(mode, '.', '').AI_SERVER_URL || 'http://localhost:8000',
+        changeOrigin: true,
+        headers: { 'X-Internal-Api-Key': loadEnv(mode, '.', '').INTERNAL_API_KEY || '' },
+      },
+      '/api': {
+        target: loadEnv(mode, '.', '').BACKEND_URL || 'http://localhost:5555',
+        changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
+      },
     },
-    '/api': {
-      target: env.BACKEND_URL || 'http://localhost:5555',
-      changeOrigin: true,
-      timeout: 0,
-      proxyTimeout: 0,
+  },
+  preview: {
+    host: 'localhost',
+    port: 8282,
+    strictPort: true,
+    proxy: {
+      '/tunnel-source': {
+        target: 'https://seoultunnel.co.kr',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/tunnel-source/, '/usage'),
+      },
+      '/control/plate': {
+        target: loadEnv(mode, '.', '').AI_SERVER_URL || 'http://localhost:8000',
+        changeOrigin: true,
+        headers: { 'X-Internal-Api-Key': loadEnv(mode, '.', '').INTERNAL_API_KEY || '' },
+      },
+      '/api': {
+        target: loadEnv(mode, '.', '').BACKEND_URL || 'http://localhost:5555',
+        changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
+      },
     },
-  }
-  return {
-    plugins: [vue()],
-    server: { host: true, port: 8282, strictPort: true, proxy },
-    preview: { host: true, port: 8282, strictPort: true, allowedHosts: true, proxy },
-  }
-})
+  },
+}))

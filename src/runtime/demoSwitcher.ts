@@ -1,9 +1,10 @@
+import { apiUrl } from '../services/apiOrigin'
 // 테스트용 계정 전환 위젯: 화면 구석의 작은 버튼 -> 고객/관리자 딸깍 로그인. ?nodemo=1 이면 숨김.
 // 시드 계정의 비밀번호는 아이디와 같다. 로그인 후 전체 새로고침으로 세션을 다시 읽는다.
 const MANAGERS: [string, string][] = [
-  ['manager03', '동구·중구 등 (초량·북항·충장)'],
-  ['manager01', '사상구'],
+  ['manager01', '동구·초량 / 시연 담당'],
   ['manager02', '해운대·금정·연제·수영'],
+  ['manager03', '사상구'],
   ['manager04', '북구·강서'],
   ['manager05', '부산진·동래·기장'],
 ]
@@ -11,8 +12,8 @@ const CUSTOMERS = ['customer01', 'customer02', 'customer03']
 
 async function login(kind: 'managers' | 'customers', id: string): Promise<boolean> {
   try {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => null)
-    const r = await fetch(`/api/${kind}/login`, {
+    await fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' }).catch(() => null)
+    const r = await fetch(apiUrl(`/api/${kind}/login`), {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -27,7 +28,7 @@ async function login(kind: 'managers' | 'customers', id: string): Promise<boolea
 async function whoAmI(): Promise<string> {
   for (const [k, n] of [['managers', '관리자'], ['customers', '고객']] as const) {
     try {
-      const r = await fetch(`/api/${k}/me`, { credentials: 'include' })
+      const r = await fetch(apiUrl(`/api/${k}/me`), { credentials: 'include' })
       if (r.ok) {
         const j = await r.json()
         return `${n} · ${j?.data?.loginId || j?.data?.name || ''}`
@@ -98,7 +99,7 @@ export function installDemoSwitcher() {
       mk(
         '로그아웃',
         async () => {
-          await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => null)
+          await fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' }).catch(() => null)
           location.href = '/'
         },
         '#6b7280',

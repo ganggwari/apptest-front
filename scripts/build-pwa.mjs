@@ -19,6 +19,28 @@ const assets = paths.map((p) => '/' + p.slice(5))
 await writeFile(
   'dist/sw.js',
   `
+// Firebase Messaging shares the same worker as the offline PWA shell.
+importScripts('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js', 'https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js');
+firebase.initializeApp({"apiKey":"AIzaSyC4tpG_t2OGKH8vQTIUHGJEM7lxR8NxiWI","authDomain":"pufpr-ab135-7d2a5.firebaseapp.com","projectId":"pufpr-ab135-7d2a5","storageBucket":"pufpr-ab135-7d2a5.firebasestorage.app","messagingSenderId":"950702292615","appId":"1:950702292615:web:ad273bbbb7d92a06cc8222","measurementId":"G-71M0N5DCW1"});
+const messaging=firebase.messaging();
+// FCM automatically displays notification payloads in the background.
+// Only manually display data-only messages to avoid duplicate notifications.
+messaging.onBackgroundMessage(payload=>{
+ if(payload.notification)return;
+ const data=payload.data||{};
+ return self.registration.showNotification(data.title||'PUF 새 알림',{body:data.body||'',tag:data.notificationId||'puf-fcm',data:{url:data.url||(data.category?'/admin-app/notifications':'/my-alerts')}});
+});
+self.addEventListener('notificationclick',event=>{
+ event.notification.close();
+ const target=event.notification.data?.url||'/my-alerts';
+ const url=new URL(target,self.location.origin);
+ if(url.origin!==self.location.origin)return;
+ event.waitUntil((async()=>{
+  const clients=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+  for(const client of clients){if(client.url.startsWith(self.location.origin)){await client.focus();await client.navigate(url.href);return;}}
+  await self.clients.openWindow(url.href);
+ })());
+});
 const CACHE=${JSON.stringify(cache)},ASSETS=${JSON.stringify(assets)};
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{for(const name of await caches.keys())if(name.startsWith('routel-static-')&&name!==CACHE)await caches.delete(name);await self.clients.claim()})()));
@@ -27,38 +49,6 @@ self.addEventListener('fetch',event=>{
  if(request.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/'))return;
  if(request.mode==='navigate'){event.respondWith((async()=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),4000);try{return await fetch(request,{signal:controller.signal})}catch{return await (await caches.open(CACHE)).match('/index.html')}finally{clearTimeout(timer)}})());return}
  if(ASSETS.includes(url.pathname))event.respondWith(caches.open(CACHE).then(async cache=>(await cache.match(url.pathname))||fetch(request)));
-});
-
-// ---- 푸시 (FCM 웹푸시, data-only 메시지: title/body/url/tag) ----
-self.addEventListener('push',event=>{
- let payload={};
- try{payload=event.data?event.data.json():{}}catch(e){try{payload={data:{body:event.data.text()}}}catch(e2){}}
- const d=payload.data||payload.notification||payload;
- event.waitUntil((async()=>{
-  const wins=await self.clients.matchAll({type:'window',includeUncontrolled:true});
-  // 앱 화면이 열려 있으면 앱이 SSE 로 알림·소리·진동을 처리하므로 중복 표시하지 않는다
-  if(wins.some(w=>w.visibilityState==='visible'))return;
-  await self.registration.showNotification(d.title||'PUF 알림',{
-   body:d.body||'',
-   tag:d.tag||'puf',
-   renotify:true,
-   requireInteraction:true,
-   silent:false,
-   vibrate:[300,120,300,120,600],
-   icon:'/icons/customer-192.png',
-   badge:'/icons/customer-192.png',
-   data:{url:d.url||'/notifications'}
-  });
- })());
-});
-self.addEventListener('notificationclick',event=>{
- event.notification.close();
- const url=(event.notification.data&&event.notification.data.url)||'/notifications';
- event.waitUntil((async()=>{
-  const wins=await self.clients.matchAll({type:'window',includeUncontrolled:true});
-  for(const w of wins){if('focus' in w){await w.focus();if('navigate' in w){try{await w.navigate(url)}catch(e){}}return}}
-  await self.clients.openWindow(url);
- })());
 });
 `,
 )

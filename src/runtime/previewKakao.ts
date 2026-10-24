@@ -1,5 +1,5 @@
 import { pageFriendlyMapScroll } from './mapScroll'
-import { getKakaoKey, loadKakao } from '../services/kakao'
+import { loadKakao } from '../services/kakao'
 import '../styles/map-weather.css'
 import { useAdminProfile } from '../stores/adminProfile'
 
@@ -9,7 +9,7 @@ export async function mountPreviewKakao(
   points: any[],
   selectGroup: (points: any[]) => void,
 ) {
-  if (!(await getKakaoKey())) return
+  if (!import.meta.env.VITE_KAKAO_MAP_KEY) return
   let disposed = false,
     map: any,
     clusterer: any,
@@ -40,7 +40,8 @@ export async function mountPreviewKakao(
     host.setAttribute('aria-label', '카카오 지도')
     parent.append(host)
     map = new sdk.maps.Map(host, { center: new sdk.maps.LatLng(35.1796, 129.0756), level: 8 })
-    const disposeScroll = pageFriendlyMapScroll(host, map)
+    const disposeScroll = pageFriendlyMapScroll(host, map,
+      /^\/(admin|customer)-app\//.test(window.location.pathname))
     ctx.on(root, 'page-dispose', disposeScroll)
     map.setCursor('grab')
     const controls = document.createElement('div')

@@ -1,46 +1,23 @@
 <script setup lang="ts">
 import NotificationBell from './NotificationBell.vue'
-import { computed, ref, watch } from 'vue'
+import { ref } from 'vue'
+import { enableFcm } from '../services/fcmPush'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
 import AdminBackButton from './AdminBackButton.vue'
+const fcmBusy = ref(false), fcmStatus = ref('')
+async function enableManagerPush() {
+  if (!app.account || fcmBusy.value) return
+  fcmBusy.value = true
+  try {
+    await enableFcm('REGIONAL_ADMIN', app.account.id, true)
+    fcmStatus.value = '관리자 FCM 푸시가 활성화되었습니다.'
+  } catch (e) { fcmStatus.value = (e as Error).message }
+  finally { fcmBusy.value = false }
+}
 const route = useRoute(),
-  app = useApp(),
-  menu = ref<HTMLDialogElement>()
-const groups = [
-  {
-    title: '현황·시설',
-    links: [
-      ['종합 현황', '/admin-app/screen-3'],
-      ['지하차도·통제', '/admin-app/screen-4'],
-      ['관할 담당자 연락처', '/admin-app/contacts'],
-    ],
-  },
-  {
-    title: 'OCR·차량',
-    links: [
-      ['OCR 인식 기록', '/admin-app/ocr'],
-      ['수동 판별', '/admin-app/reviews'],
-      ['차량 통과 기록', '/admin-app/transits'],
-    ],
-  },
-  {
-    title: '예지보전',
-    links: [
-      ['설비 목록', '/admin-app/screen-9'],
-      ['점검 대상·알림', '/admin-app/screen-11'],
-      ['점검 이력', '/admin-app/history'],
-    ],
-  },
-  {
-    title: '알림·운영',
-    links: [
-      ['내 관리자 알림', '/admin-app/notifications'],
-      ['알림 발송 기록', '/admin-app/screen-13'],
-      ['더보기·내 정보', '/admin-app/screen-14'],
-    ],
-  },
-]
+  app = useApp()
 const titles: Record<string, string> = {
   '2': '근무 시작',
   '3': '종합 현황',
@@ -53,7 +30,7 @@ const titles: Record<string, string> = {
   '10': '설비 상세',
   '11': '점검 대상·알림',
   '12': '점검 등록',
-  '13': '알림 발송 기록',
+  '13': '알림',
   '14': '더보기·내 정보',
   history: '점검 이력',
   document: '통제 전달 문서',
@@ -74,69 +51,30 @@ const section = computed(() => route.path.split('/').at(-1)!.replace('screen-', 
           ? '/admin-app/screen-4'
           : '/admin-app/screen-3',
   )
-watch(
-  () => route.fullPath,
-  () => menu.value?.close(),
-)
-function outside(event: MouseEvent) {
-  if (event.target !== menu.value) return
-  const bounds = menu.value.getBoundingClientRect()
-  if (
-    event.clientX < bounds.left ||
-    event.clientX > bounds.right ||
-    event.clientY < bounds.top ||
-    event.clientY > bounds.bottom
-  )
-    menu.value.close()
-}
 </script>
 <template>
   <header class="manager-app-header">
     <div class="manager-app-brandbar">
-      <button type="button" aria-label="관리자 앱 메뉴 열기" @click="menu?.showModal()">
+      <RouterLink :to="{path:'/admin-app/menu',query:{from:route.fullPath}}" class="manager-app-menu-link" aria-label="관리자 앱 메뉴 열기">
         <UiIcon name="menu" />
-      </button>
+      </RouterLink>
       <RouterLink
         class="manager-app-logo"
         to="/admin-app/screen-3"
         aria-label="ROUTEL 관리자 앱 홈"
       >ROUTEL</RouterLink>
+      <button type="button" class="manager-fcm-setup" :disabled="fcmBusy" @click="enableManagerPush">{{fcmBusy?'연결 중':'푸시 켜기'}}</button>
       <NotificationBell class="manager-app-bell-preview" />
     </div>
     <div class="manager-app-titlebar">
       <AdminBackButton :fallback="fallback" />
       <strong>{{title}}</strong>
-      <button class="ui-icon-button" type="button" aria-label="라이트·다크 전환" @click="app.themeToggle()">
+      <button class="ui-icon-button theme-toggle" type="button" aria-label="라이트·다크 전환" :aria-pressed="app.theme==='dark'" @click="app.themeToggle()">
           <UiIcon name="theme" />
         </button>
     </div>
-    <dialog
-      ref="menu"
-      class="manager-app-drawer"
-      aria-label="관리자 앱 페이지 메뉴"
-      @click="outside"
-    >
-      <div class="manager-app-drawer-head">
-        <strong>ROUTEL 관리자 메뉴</strong>
-        <button class="ui-icon-button" type="button" aria-label="메뉴 닫기" @click="menu?.close()">
-          <UiIcon name="close" />
-        </button>
-      </div>
-      <nav aria-label="관리자 앱 페이지 목록">
-        <section v-for="group in groups" :key="group.title">
-          <h2>{{group.title}}</h2>
-          <RouterLink
-            v-for="[label,path] in group.links"
-            :key="path"
-            :to="path!"
-            :aria-current="route.path===path?'page':undefined"
-            @click="menu?.close()"
-          >
-            {{label}}
-          </RouterLink>
-        </section>
-      </nav>
-    </dialog>
+  <p v-if="fcmStatus" role="status" style="padding:6px 12px;font-size:12px">{{fcmStatus}}</p>
   </header>
 </template>
 <style scoped src="../styles/components/admin-app-header.css"></style>
+<style scoped>.manager-fcm-setup{font:inherit;font-size:11px;border:1px solid rgba(255,255,255,.65);color:inherit;background:transparent;border-radius:10px;padding:7px 8px;cursor:pointer}.manager-fcm-setup:disabled{opacity:.6}</style>

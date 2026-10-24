@@ -1,3 +1,4 @@
+import { navigationWsUrl } from '../services/apiOrigin'
 // 실시간 연결 상태(SSE / WebSocket)를 화면 상단에 띄우는 작은 표시줄. 시연·테스트용.
 // ?nodemo=1 이면 숨김. SSE 상태는 useBackendEvents.ts 가 report 로 알려준다.
 type Sse = 'idle' | 'connecting' | 'open' | 'lost'
@@ -28,8 +29,7 @@ export function probeWs() {
     sock?.close()
     st.ws = 'connecting'
     poke()
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const s = new WebSocket(`${proto}//${location.host}/ws/navigation`)
+    const s = new WebSocket(navigationWsUrl())
     sock = s
     window.setTimeout(() => {
       if (sock === s && st.ws === 'connecting') ((st.ws = 'closed'), s.close(), poke())

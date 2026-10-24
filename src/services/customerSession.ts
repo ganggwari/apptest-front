@@ -1,7 +1,9 @@
+import { apiUrl } from '../services/apiOrigin'
+import { disableFcm } from './fcmPush'
 import { useApp } from '../stores/app'
 // Cookie credentials and the observed first-phase endpoints are preserved.
 export async function customerRequest(path: string, body?: unknown) {
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     method: body === undefined ? 'GET' : 'POST',
     credentials: 'include',
     cache: 'no-store',
@@ -32,7 +34,8 @@ export async function restoreCustomer() {
   }
 }
 export async function logoutCustomer() {
-  const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+  if (useApp().account?.role === 'customer') await disableFcm('customer').catch(() => {})
+  const response = await fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' })
   if (!response.ok) throw new Error('로그아웃에 실패했습니다.')
   useApp().clearAccount()
 }

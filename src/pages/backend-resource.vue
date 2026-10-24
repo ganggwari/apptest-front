@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TunnelCctvDialog from '../components/TunnelCctvDialog.vue'
 import { useNotificationGlow } from '../stores/notificationGlow'
 const notificationGlow = useNotificationGlow()
 import RiskLevelBadge from '../components/RiskLevelBadge.vue'
@@ -111,6 +112,20 @@ async function review(row: Record<string, any>, number: string) {
   values.correctedNum = number
 }
 const publicNotices = computed(() => customer.value && resourceId.value === 'notices')
+const managerNotificationList = computed(() => resourceId.value === 'manager-notifications')
+const pageSize = computed(() => route.path.startsWith('/admin-app/') ? (managerNotificationList.value ? 5 : appFacilityList.value ? 8 : 20) : route.path.startsWith('/customer-app/') ? 20 : 10)
+async function markManagerNotificationRead(row: Record<string, any>) {
+  if (saving.value || row.read) return
+  saving.value = true
+  error.value = ''
+  try {
+    await backend(`/api/managers/me/notifications/${encodeURIComponent(row.id)}/read`, { method: 'PUT' })
+    row.read = true
+    await managerNotifications.refresh()
+    if (filters.unreadOnly) await load()
+  } catch (e) { error.value = (e as Error).message }
+  finally { saving.value = false }
+}
 const readNotices = ref<Record<string, string>>({})
 const noticeReadKey = computed(
   () => `routel-read-notices:${app.account?.role || 'guest'}:${app.account?.id || 'guest'}`,
@@ -156,18 +171,29 @@ async function loadCollection(signal: AbortSignal) {
     items = [...first.items]
   for (let current = 2; current <= first.totalPages; current++)
     items.push(...(await fetchPage(current)).items)
-  if (resourceId.value === 'notices')
-    items.sort((a, b) => Number(Boolean(b.important)) - Number(Boolean(a.important)))
+  if (['notices', 'faqs'].includes(resourceId.value)) {
+    const views = (row: Record<string, any>) => {
+      const count = Number(row.viewCount)
+      return Number.isFinite(count) ? Math.max(0, count) : 0
+    }
+    const important = (row: Record<string, any>) =>
+      row.important === true || row.important === 'true' || row.important === 1
+    items.sort((a, b) =>
+      (resourceId.value === 'notices' ? Number(important(b)) - Number(important(a)) : 0) ||
+      views(b) - views(a),
+    )
+  }
   if ((facilityList.value || appFacilityList.value) && riskFilter.value) {
     const selected = items.filter((row) => matchesRisk(row.currentRiskLevel, riskFilter.value))
     items.splice(0, items.length, ...selected)
   }
-  const totalPages = Math.ceil(items.length / 20)
+  const size = pageSize.value
+  const totalPages = Math.ceil(items.length / size)
   page.value = Math.min(page.value, Math.max(1, totalPages))
   return {
-    items: items.slice((page.value - 1) * 20, page.value * 20),
+    items: items.slice((page.value - 1) * size, page.value * size),
     page: page.value,
-    size: 20,
+    size,
     totalItems: items.length,
     totalPages,
   }
@@ -250,7 +276,7 @@ const acknowledge = ref(false)
 const data = ref<PageData<Record<string, any>>>({
     items: [],
     page: 1,
-    size: 20,
+    size: pageSize.value,
     totalItems: 0,
     totalPages: 0,
   }),
@@ -293,6 +319,8 @@ async function lookup(fields: Field[], row?: Record<string, any>) {
             ? '/api/shifts'
             : field.source === 'presets'
               ? '/api/display/presets'
+              : field.source === 'vms'
+                ? '/api/its-vms'
               : field.source === 'reasons'
                 ? '/api/control/reason-presets' +
                   (action.value?.path.endsWith('/release')
@@ -307,7 +335,10 @@ async function lookup(fields: Field[], row?: Record<string, any>) {
       if (alive && scope === resourceId.value && (!row || selected.value?.id === row.id))
         choices[field.key] = asPage<any>(result).items.map((item) => ({
           value: String(item.id),
-          label: item.name || item.content || `${item.cameraRole} · ${item.id}`,
+          label:
+            field.source === 'vms'
+              ? `${item.name}${item.dummy ? ' (시연용)' : ''} · ${item.id}`
+              : item.name || item.content || `${item.cameraRole} · ${item.id}`,
         }))
     } catch {
       /* Main list retains its own request error. */
@@ -326,13 +357,19 @@ async function load() {
     if (filters.startDate && filters.endDate && filters.startDate > filters.endDate)
       throw new Error('시작일은 종료일보다 늦을 수 없습니다.')
     const result =
-      resourceId.value === 'notices' || facilityList.value || appFacilityList.value
+      ['notices', 'faqs'].includes(resourceId.value) || managerNotificationList.value || facilityList.value || appFacilityList.value
         ? await loadCollection(abort.signal)
         : await backend(
-            path(resource.value.path) + queryString({ ...filters, page: page.value, size: 20 }),
+            path(resource.value.path) + queryString({ ...filters, page: page.value, size: pageSize.value }),
             { signal: abort.signal },
           )
-    if (seq === request) data.value = asPage(result, page.value)
+    if (seq === request) {
+      if (Array.isArray(result)) {
+        const size=pageSize.value, totalPages=Math.ceil(result.length/size)
+        page.value=Math.min(page.value,Math.max(1,totalPages))
+        data.value={items:result.slice((page.value-1)*size,page.value*size),page:page.value,size,totalItems:result.length,totalPages}
+      } else data.value = asPage(result, page.value, pageSize.value)
+    }
   } catch (e) {
     if (seq === request && !abort.signal.aborted) error.value = (e as Error).message
   } finally {
@@ -375,6 +412,17 @@ function actionEnabled(row: Record<string, any>) {
 function openDialog() {
   if (modal.value && !modal.value.open) modal.value.showModal()
 }
+let summaryBackdropDown = false
+function isSummaryBackdrop(event: MouseEvent | PointerEvent) {
+  const dialog = modal.value
+  if (!dialog || event.target !== dialog || mode.value !== 'detail' || saving.value) return false
+  const rect = dialog.getBoundingClientRect()
+  return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom
+}
+function closeSummaryBackdrop(event: MouseEvent) {
+  if (summaryBackdropDown && isSummaryBackdrop(event)) modal.value?.close()
+  summaryBackdropDown = false
+}
 async function open(kind: string, row?: Record<string, any>, itemAction?: Action) {
   if (resource.value.detailFromRow && row)
     row = data.value.items.find((item) => String(item.id) === String(row?.id)) || row
@@ -401,6 +449,13 @@ async function open(kind: string, row?: Record<string, any>, itemAction?: Action
     if (row && resource.value.detail && !resource.value.detailFromRow) {
       detail.value = await backend(`${path(resource.value.path)}/${encodeURIComponent(row.id)}`)
     }
+    // 전광판: 기본 문구(defaultPage)와 자동 표출 페이지(manual=false)는 서버가 만들고 수정·삭제를 막는다
+    if (resourceId.value === 'display' && ['edit', 'remove'].includes(kind) && row && (row.defaultPage || row.manual === false))
+      throw new Error(
+        row.defaultPage
+          ? '기본 문구는 수정·삭제할 수 없어요. 새 페이지를 등록하면 기본 문구 대신 표출돼요.'
+          : '자동 표출 페이지는 수정·삭제할 수 없어요. 지하차도 상태가 바뀌면 자동으로 바뀌어요.',
+      )
     if (resourceId.value === 'my-inquiries' && kind === 'edit' && detail.value.status !== 'PENDING')
       throw new Error('답변이 등록된 문의는 수정할 수 없습니다.')
     if (
@@ -439,6 +494,12 @@ async function open(kind: string, row?: Record<string, any>, itemAction?: Action
                 ? ''
                 : String(value)
     }
+    if (kind === 'create' && !values.regionId && formFields.value.some(field => field.key === 'regionId') &&
+        app.account?.role === 'REGIONAL_ADMIN' && app.account.regions?.length)
+      values.regionId = String(app.account.regions[0]!.id)
+    // 전광판 새 페이지: 지하차도 상세 탭에서 열었으면 그 지하차도를 원인 지하차도로 미리 고른다
+    if (kind === 'create' && resourceId.value === 'display' && !values.underpassId && route.query.underpassId)
+      values.underpassId = String(route.query.underpassId)
     void lookup(formFields.value, row)
     openDialog()
     if (publicNotices.value && kind === 'detail' && row) {
@@ -491,6 +552,8 @@ async function submit() {
       !String(values.content || '').trim()
     )
       throw new Error('문구를 선택하거나 입력해 주세요.')
+    if (resourceId.value === 'display' && mode.value === 'create' && !values.underpassId)
+      throw new Error('원인 지하차도를 선택해 주세요.')
     if (resourceId.value === 'customers' && mode.value === 'edit' && !acknowledge.value)
       throw new Error('주소·비상 연락처 교체 내용을 확인해 주세요.')
     let url = path(resource.value.path),
@@ -605,7 +668,7 @@ watch(
     for (const obj of [filters, parents, choices])
       Object.keys(obj).forEach((key) => delete obj[key])
     page.value = 1
-    data.value = { items: [], page: 1, size: 20, totalItems: 0, totalPages: 0 }
+    data.value = { items: [], page: 1, size: pageSize.value, totalItems: 0, totalPages: 0 }
     error.value = ''
     if (!resource.value) {
       error.value = '페이지를 찾을 수 없습니다.'
@@ -616,6 +679,10 @@ watch(
     for (const field of resource.value.filters || [])
       filters[field.key] =
         field.type === 'checkbox' ? route.query[field.key] === 'true' : route.query[field.key] || ''
+    if (app.account?.role === 'REGIONAL_ADMIN' && app.account.regions?.length === 1 &&
+        resource.value.filters?.some(field => field.key === 'regionId') &&
+        route.query.regionId == null && route.query.underpassId == null)
+      filters.regionId = String(app.account.regions[0]!.id)
     if (resourceId.value === 'alerts' && alertLogReturn.path) {
       Object.assign(filters, alertLogReturn.filters)
       page.value = alertLogReturn.page
@@ -726,7 +793,7 @@ useBackendEvents((event) => {
       if (index >= 0) data.value.items[index] = plateQueueRow(payload, data.value.items[index])
       else if (page.value === 1 && !filters.regionId && !filters.recognitionStatus) {
         data.value.items.unshift(plateQueueRow(payload))
-        data.value.items = data.value.items.slice(0, 20)
+        data.value.items = data.value.items.slice(0, pageSize.value)
         data.value.totalItems++
       }
       queueLiveRefresh()
@@ -744,7 +811,8 @@ useBackendEvents((event) => {
     data.value.items = [
       { ...payload, read: previous?.read ?? false },
       ...data.value.items.filter((row) => row.id !== payload.id),
-    ].slice(0, 20)
+    ].slice(0, pageSize.value)
+    data.value.totalPages = Math.ceil(data.value.totalItems / pageSize.value)
     return
   }
   if (name === 'data-changed' && keys[resourceId.value] === payload.resource) {
@@ -758,7 +826,7 @@ useBackendEvents((event) => {
     (resourceId.value === 'events' && name === 'control-change') ||
     (resourceId.value === 'display' &&
       name === 'display-change' &&
-      String(parents.equipId) === String(payload.equipId)) ||
+      String(parents.vmsId) === String(payload.vmsId)) ||
     (resourceId.value === 'alerts' &&
       ['risk-level-change', 'control-change', 'notification-new'].includes(name))
   )
@@ -881,7 +949,16 @@ defineExpose({ open, load })
         />
         <button class="btn sm" type="submit">조회</button>
       </form>
-      <form v-else class="service-filters filters" @submit.prevent="search">
+      <form v-else-if="managerNotificationList" class="manager-notification-filters" @submit.prevent="search">
+        <label>분류<select v-model="filters.category" @change="search"><option value="">전체 알림</option><option v-for="[value,label] in resource.filters?.[0]?.options||[]" :key="value" :value="value">{{label}}</option></select></label>
+        <label class="manager-unread-filter"><input v-model="filters.unreadOnly" type="checkbox" @change="search" />안 읽은 알림만</label>
+      </form>
+      <form
+        v-else-if="!customer||resource.parents?.length||resource.filters?.length"
+        class="service-filters filters"
+        @submit.prevent="search"
+        @change="customer&&search()"
+      >
         <ServiceFields
           v-if="resource.parents?.length"
           :fields="resource.parents"
@@ -894,7 +971,7 @@ defineExpose({ open, load })
           :values="filters"
           :choices="choices"
         />
-        <button type="submit" :disabled="loading">
+        <button v-if="!customer" type="submit" :disabled="loading">
           {{resourceId==='my-inquiries'?'검색':'조회'}}
         </button>
       </form>
@@ -915,6 +992,14 @@ defineExpose({ open, load })
       <template v-else>
         <p class="service-result-count" role="status">총 {{data.totalItems}}건</p>
         <AdminAppFacilityRows v-if="appFacilityList" :items="facilityRows" />
+        <ul v-else-if="managerNotificationList" class="manager-notification-cards" aria-label="관리자 알림 목록">
+          <li v-for="row in data.items" :key="row.id" :class="{'is-unread':!row.read}">
+            <div class="manager-notification-meta"><span class="manager-notification-category">{{valueLabels[row.category]||'알림'}}</span><span v-if="!row.read" class="manager-notification-unread">● 안 읽음</span><time>{{display(row.createdAt)}}</time></div>
+            <h2>{{row.title}}</h2><p>{{row.body}}</p>
+            <button v-if="!row.read" type="button" :disabled="saving" @click="markManagerNotificationRead(row)">읽음 처리</button><small v-else class="manager-notification-read">✓ 읽음</small>
+          </li>
+          <li v-if="!data.items.length" class="manager-notification-empty">표시할 알림이 없습니다.</li>
+        </ul>
         <AdminFacilityList
           v-else-if="facilityList"
           :items="facilityRows"
@@ -932,6 +1017,7 @@ defineExpose({ open, load })
           v-else-if="resourceId==='faqs'"
           :items="data.items"
           :manage="canWrite"
+          :allow-reorder="false"
           :initial-open-id="String(route.query.id||'')"
           :saving="saving"
           @move="moveFaq"
@@ -1033,8 +1119,10 @@ defineExpose({ open, load })
       <dialog
         ref="modal"
         class="service-modal"
-        :class="{'restored-summary-drawer':restored&&mode==='detail'&&['facilities','customers'].includes(resourceId)}"
+        :class="{'service-app-modal':route.path.startsWith('/customer-app/')||route.path.startsWith('/admin-app/'),'restored-summary-drawer':restored&&mode==='detail'&&['facilities','customers'].includes(resourceId)}"
         @close="mode=''"
+        @pointerdown="summaryBackdropDown = isSummaryBackdrop($event)"
+        @click="closeSummaryBackdrop"
       >
         <form @submit.prevent="submit">
           <header>
@@ -1104,6 +1192,10 @@ defineExpose({ open, load })
               </template>
             </template>
           </dl>
+          <div v-if="mode==='detail'&&facilityList" class="service-actions">
+            <TunnelCctvDialog :facility-name="detail.name" />
+            <RouterLink :to="{path:route.path.startsWith('/admin-app/')?'/admin-app/screen-5':'/fac-detail',query:{id:String(detail.id),underpassId:String(detail.id),tab:'cctv'}}">시설 CCTV 보기</RouterLink>
+          </div>
           <div v-if="mode==='detail'&&canWrite" class="service-actions">
             <button v-if="canEditRow(detail)" type="button" @click="open('edit',detail)">수정</button>
             <button v-if="resource.remove" type="button" @click="open('remove',detail)">삭제</button>

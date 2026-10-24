@@ -18,21 +18,33 @@ import ServiceNotifications from './pages/service-notifications.vue'
 import ServiceAccount from './pages/service-account.vue'
 import ServiceDashboard from './pages/service-dashboard.vue'
 import AdminFacilityRestored from './pages/admin-facility-restored.vue'
+import PmEquipmentLive from './pages/pm-equipment-live.vue'
+import PmEquipmentDetailLive from './pages/pm-equipment-detail-live.vue'
+import PmQueueLive from './pages/pm-queue-live.vue'
+import PmHistoryLive from './pages/pm-history-live.vue'
 import ServiceResource from './pages/backend-resource.vue'
 import LiveMap from './pages/c-live-map.vue'
 import { resourceRoutes } from './data/backendResources'
 import AdminHandover from './components/AdminHandover.vue'
 import CustomerHeader from './components/CustomerHeader.vue'
+import CustomerArrivalAlert from './components/CustomerArrivalAlert.vue'
 import CustomerFooter from './components/CustomerFooter.vue'
 import MyPageLayout from './components/MyPageLayout.vue'
 import CustomerPageLayout from './components/CustomerPageLayout.vue'
 import PublicChatbot from './components/PublicChatbot.vue'
 import { mobileInteractions } from './runtime/mobileInteractions'
 import { useApp } from './stores/app'
+import { enableFcm, resetFcmOwner } from './services/fcmPush'
 useBackendStream()
 const app = useApp()
 const notificationGlow = useNotificationGlow()
-watch(() => [app.account?.id, app.account?.role], () => notificationGlow.reset())
+watch(() => [app.account?.id, app.account?.role], ([id, role], [oldId, oldRole] = []) => {
+  notificationGlow.reset()
+  if (!id || !role) { resetFcmOwner(); return }
+  if ((id !== oldId || role !== oldRole) && 'Notification' in window && Notification.permission === 'granted') {
+    void enableFcm(role === 'customer' ? 'customer' : 'REGIONAL_ADMIN', String(id)).catch(e => console.warn('FCM 자동 재등록 실패:', e))
+  }
+}, { immediate: true })
 useBackendEvents(({ name, data }) => {
   if (name === 'notification-new') notificationGlow.mark('notification', data.id)
   if (name === 'notice-new') notificationGlow.mark('notice', data.id ?? data.noticeId)
@@ -90,6 +102,10 @@ const serviceComponent = computed(() => {
     return ServiceResource
   if (['/c-map', '/customer-app/screen-5', '/customer-app/screen-6'].includes(path)) return LiveMap
   if (path === '/fac-detail') return AdminFacilityRestored
+  if (path === '/pm-equipment') return PmEquipmentLive
+  if (path === '/pm-equipment-detail') return PmEquipmentDetailLive
+  if (path === '/pm-queue') return PmQueueLive
+  if (path === '/pm-history') return PmHistoryLive
   if (path === '/admin-app/screen-5') return AdminAppFacilityLive
   if (path === '/admin-app/screen-3') return AdminAppOverview
   if (path === '/admin-dashboard') return ServiceDashboard
@@ -97,7 +113,7 @@ const serviceComponent = computed(() => {
     ['/admin-profile', '/admin-app/screen-14', '/my-home', '/my-account', '/my-withdraw'].includes(
       path,
     ) ||
-    /^\/customer-app\/account\/(profile|emergency|settings|withdraw)$/.test(path)
+    /^\/customer-app\/account\/(profile|emergency|cars|settings|withdraw)$/.test(path)
   )
     return ServiceAccount
   if (
@@ -133,12 +149,13 @@ function unmounted(vnode: VNode) {
 </script>
 <template>
   <div
-    :class="{'manager-app-shell':managerApp,'customer-shell':customer,'service-mobile':appService,'admin-shell':!customer&&!route.path.startsWith('/admin-app/')&&!route.path.startsWith('/customer-app/')}"
+    :class="{'admin-interface':!customer&&!route.path.startsWith('/customer-app/'),'manager-app-shell':managerApp,'customer-shell':customer,'customer-editorial':customer&&!['/c-map','/c-live-map'].includes(route.path),'customer-app-editorial':route.path.startsWith('/customer-app/')&&!['/customer-app/screen-5','/customer-app/screen-6'].includes(route.path),'service-mobile':appService,'admin-shell':!customer&&!route.path.startsWith('/admin-app/')&&!route.path.startsWith('/customer-app/')}"
   >
-    <AdminAppHeader v-if="managerApp" />
+    <AdminAppHeader v-if="managerApp&&route.path!=='/admin-app/menu'" />
     <PwaStatus :hide-install="managerApp" v-if="/^\/(admin|customer)-app\//.test(route.path)" />
     <AdminHandover v-if="app.account?.role==='REGIONAL_ADMIN'" />
     <CustomerHeader v-if="customer" />
+    <CustomerArrivalAlert />
     <RouterView v-slot="{Component}">
       <CustomerPageLayout v-if="customer">
         <MyPageLayout v-if="route.path.startsWith('/my-')">
@@ -168,7 +185,7 @@ function unmounted(vnode: VNode) {
         @vue:unmounted="unmounted"
       />
     </RouterView>
-    <AdminAppNav v-if="managerApp" />
+    <AdminAppNav v-if="managerApp&&route.path!=='/admin-app/menu'" />
     <CustomerFooter v-if="customer" />
     <PublicChatbot v-if="customer" />
   </div>

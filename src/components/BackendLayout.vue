@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { disableFcm } from '../services/fcmPush'
 import NotificationBell from './NotificationBell.vue'
+import DemoRainButton from './DemoRainButton.vue'
 import AdminSidebarLinks from '../components/AdminSidebarLinks.vue'
 import '../styles/fac-list.css'
 import MenuIcon from './MenuIcon.vue'
@@ -67,6 +69,7 @@ async function navigateMenu(event: MouseEvent) {
 }
 async function logout() {
   try {
+    if (app.account?.role === 'REGIONAL_ADMIN') await disableFcm('REGIONAL_ADMIN').catch(() => {})
     await backend('/api/auth/logout', { method: 'POST' })
     app.clearAccount()
     await router.push(mobile.value ? '/admin-app/screen-1' : '/admin-login')
@@ -92,11 +95,13 @@ async function logout() {
           <RouterLink class="admin-home-logo" :to="mobile?'/admin-app/screen-3':'/admin-dashboard'">ROUTEL</RouterLink>
         </div>
         <div class="hdr-r">
+          <DemoRainButton />
           <NotificationBell class="manager-header-bell" @opened="open=false" />
           <RouterLink class="user backend-user" to="/admin-profile">
             {{app.account?.name||'관리자'}}님</RouterLink>
           <button class="btn sm" v-if="app.account" @click="logout">로그아웃</button>
           <RouterLink v-else to="/admin-login">관리자 로그인</RouterLink>
+          <button class="ui-icon-button theme-toggle" type="button" aria-label="라이트·다크 모드 전환" :aria-pressed="app.theme==='dark'" :title="app.theme==='dark'?'라이트 모드로 전환':'다크 모드로 전환'" @click="app.themeToggle()"><UiIcon name="theme" /></button>
         </div>
       </header>
       <div v-if="open" class="backend-scrim scrim" @click="open=false"></div>

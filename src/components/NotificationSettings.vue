@@ -1,21 +1,16 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { backend } from '../services/backend'
+import { enableFcm, disableFcm } from '../services/fcmPush'
+import { useApp } from '../stores/app'
 import { useCustomerNotifications } from '../stores/customerNotifications'
-import { enableWebPush, disableWebPush, webPushSupported } from '../services/push'
-import { alertCueEnabled, setAlertCueEnabled, playAlertCue } from '../utils/alertCue'
+const app = useApp()
 const notifications = useCustomerNotifications(),
   devices = ref<{ id: number; platform: string; active: boolean }[]>([]),
   loading = ref(false),
   busy = ref(false),
   error = ref(''),
   message = ref('')
-const cue = ref(alertCueEnabled())
-function toggleCue() {
-  cue.value = !cue.value
-  setAlertCueEnabled(cue.value)
-  if (cue.value) playAlertCue()
-}
 const supported = 'Notification' in window,
   permission = ref(supported ? Notification.permission : 'unsupported')
 const controller = new AbortController()
@@ -37,8 +32,8 @@ async function toggle() {
   message.value = ''
   try {
     if (notifications.browserEnabled) {
+      if (app.account?.role === 'customer') await disableFcm('customer')
       notifications.setBrowserEnabled(false)
-      await disableWebPush()
       message.value = '이 브라우저의 새 알림을 껐습니다.'
       return
     }
@@ -55,16 +50,13 @@ async function toggle() {
           : '알림 권한을 허용하면 새 알림을 받을 수 있습니다.'
       return
     }
+    if (!app.account || app.account.role !== 'customer') throw new Error('고객 로그인이 필요합니다.')
+    await enableFcm('customer', app.account.id)
     notifications.setBrowserEnabled(true)
-    if (webPushSupported()) {
-      const pushed = await enableWebPush()
-      message.value = pushed.ok
-        ? '알림을 켰습니다. 앱을 닫아도 푸시 알림을 받습니다.'
-        : '알림을 켰습니다. (앱을 닫은 뒤의 푸시는 사용할 수 없습니다: ' + (pushed.reason || '') + ')'
-      void load()
-    } else message.value = '이 브라우저의 새 알림을 켰습니다.'
-  } catch {
-    message.value = '알림 권한을 확인하지 못했습니다. 브라우저의 사이트 설정을 확인해 주세요.'
+    await load()
+    message.value = 'FCM 푸시 토큰이 등록되었습니다. 앱을 닫아도 푸시를 받을 수 있습니다.'
+  } catch (e) {
+    message.value = (e as Error).message || 'FCM 등록에 실패했습니다.'
   } finally {
     busy.value = false
   }
@@ -93,15 +85,6 @@ onBeforeUnmount(() => controller.abort())
         @click="toggle"
       >
         {{notifications.browserEnabled&&permission==='granted'?'켜짐':'꺼짐'}}
-      </button>
-    </div>
-    <div class="notification-setting-row">
-      <div>
-        <strong>알림 소리·진동</strong>
-        <p>화면을 열어 둔 동안 새 알림이 오면 소리와 진동으로 알려드립니다. (앱을 닫은 뒤에는 기기의 알림 소리·진동 설정을 따릅니다.)</p>
-      </div>
-      <button type="button" class="notification-setting-switch" role="switch" :aria-checked="cue" aria-label="알림 소리와 진동" @click="toggleCue">
-        {{cue?'켜짐':'꺼짐'}}
       </button>
     </div>
     <p v-if="permission==='denied'" class="notification-setting-help">알림 권한이 차단되어 있습니다. 주소창 옆 사이트 설정에서 허용할 수 있습니다.</p>

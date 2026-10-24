@@ -1,11 +1,11 @@
 <script setup lang="ts">
+import { apiUrl } from '../services/apiOrigin'
 import { riskChartSeries, riskTimestamp } from '../utils/risk-chart'
 import { useRiskChartClock } from '../composables/useRiskChartClock'
 import { useBackendEvents } from '../composables/useBackendEvents'
 import { appendRiskHistory } from '../services/streamUpdates'
 import { onBeforeUnmount, onMounted, ref, computed, watch } from 'vue'
 import { displayDate, dateParts } from '../utils/display-date'
-import { loadKakao } from '../services/kakao'
 import HourlyForecast from '../components/HourlyForecast.vue'
 
 type Hour = {
@@ -188,7 +188,8 @@ async function fetchRiskForecast(signal?: AbortSignal) {
   const id = selectedFacilityId.value
   if (!id) return
   try {
-    const response = await fetch(`/api/underpasses/${id}/risk-forecast`, {
+    const response = await fetch(apiUrl(`/api/underpasses/${id}/risk-forecast`), {
+      credentials: 'include',
       signal,
       credentials: 'include',
       cache: 'no-store',
@@ -305,7 +306,8 @@ async function fetchWeather(lat: number, lng: number, signal: AbortSignal) {
       }
       return
     }
-    const response = await fetch(`/api/weather?lat=${lat}&lng=${lng}`, {
+    const response = await fetch(apiUrl(`/api/weather?lat=${lat}&lng=${lng}`), {
+      credentials: 'include',
       signal,
       cache: 'no-store',
     })
@@ -335,7 +337,8 @@ async function refresh() {
     if (!facilities.value.length) {
       const collected: Facility[] = []
       for (let page = 1; page <= 100; page++) {
-        const response = await fetch(`/api/underpasses?page=${page}&size=100`, {
+        const response = await fetch(apiUrl(`/api/underpasses?page=${page}&size=100`), {
+          credentials: 'include',
           signal: current.signal,
           cache: 'no-store',
         })
@@ -372,8 +375,8 @@ async function refresh() {
       return
     }
     const response = await fetch(
-      `/api/underpasses/${selectedFacilityId.value}/risk-scores?hours=24`,
-      { signal: current.signal, cache: 'no-store' },
+      apiUrl(`/api/underpasses/${selectedFacilityId.value}/risk-scores?hours=24`),
+      { signal: current.signal, credentials: 'include', cache: 'no-store' },
     )
     if (!response.ok) throw new Error('강수량 기록을 받아오지 못했습니다.')
     const body = await response.json()
@@ -486,7 +489,23 @@ function selectFacilityFromList() {
 async function loadMap() {
   const win = window as any
   try {
-    await loadKakao() // 카카오 SDK, 실패하면 OpenStreetMap 호환 계층으로 자동 대체
+    if (!win.kakao?.maps?.load) {
+      let script = document.querySelector<HTMLScriptElement>(
+        'script[src*="dapi.kakao.com/v2/maps/sdk.js"]',
+      )
+      if (!script) {
+        script = document.createElement('script')
+        const key = import.meta.env.VITE_KAKAO_MAP_KEY || ''
+        if (!key) throw new Error('카카오 지도 키를 설정해 주세요.')
+        script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&libraries=services&autoload=false`
+        document.head.appendChild(script)
+      }
+      await new Promise<void>((resolve, reject) => {
+        if (win.kakao?.maps?.load) return resolve()
+        script!.addEventListener('load', () => resolve(), { once: true })
+        script!.addEventListener('error', () => reject(new Error('지도 로드 실패')), { once: true })
+      })
+    }
     if (!active) return
     win.kakao.maps.load(() => {
       if (!active || !mapEl.value) return

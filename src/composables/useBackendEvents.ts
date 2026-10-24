@@ -1,8 +1,7 @@
+import { apiUrl } from '../services/apiOrigin'
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { useApp } from '../stores/app'
 import { backend } from '../services/backend'
-import { syncAppPush } from '../services/push'
-import { playAlertCue } from '../utils/alertCue'
 import { reportSse, probeWs } from '../runtime/connStatus'
 export type BackendEvent = { name: string; data: Record<string, any> }
 const eventNames = [
@@ -20,6 +19,7 @@ const eventNames = [
   'display-change',
   'notification-new',
   'data-changed',
+  'pm-update',
 ]
 // One stream for the app, restarted when the authenticated identity changes.
 const WATCHDOG_MS = 40000 // 서버 하트비트 15초 간격의 2.5배
@@ -52,7 +52,6 @@ export function useBackendStream() {
       const result = await backend('/api/managers/me/notifications/unread-count')
       if (stream === source && version === countVersion) {
         const next = Math.max(0, Number(result?.total) || 0)
-        if (next > app.unread && countVersion > 1) playAlertCue()   // 관리자: 새 알림이 늘면 소리·진동
         app.unread = next
       }
     } catch {
@@ -80,7 +79,7 @@ export function useBackendStream() {
   function connect() {
     close()
     if (!alive || typeof EventSource === 'undefined') return
-    const source = new EventSource(url(), { withCredentials: true })
+    const source = new EventSource(apiUrl(url()), { withCredentials: true })
     stream = source
     reportSse('connecting', { retry: attempts, url: url() })
     source.onopen = () => {
@@ -130,7 +129,6 @@ export function useBackendStream() {
     ],
     () => {
       attempts = 0
-      syncAppPush(app.account?.role === 'customer')
       connect()
       if (app.account) probeWs()
     },

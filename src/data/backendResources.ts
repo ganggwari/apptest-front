@@ -14,7 +14,7 @@ export type Field = {
     | 'lines'
   required?: boolean
   options?: [string, string][]
-  source?: 'regions' | 'underpasses' | 'shifts' | 'cameras' | 'presets' | 'reasons'
+  source?: 'regions' | 'underpasses' | 'shifts' | 'cameras' | 'presets' | 'reasons' | 'vms'
 }
 export type Action = {
   label: string
@@ -340,16 +340,23 @@ export const backendResources: Record<string, Resource> = {
       { label: 'PDF 다시 받기', path: '/api/control/transfers/{id}/pdf', method: 'GET', pdf: true },
     ],
   },
+  // 전광판(its_vms) 한 대의 수동 페이지. 자동 표출 페이지(차단·위험 문구)는 서버가 만들고 수정·삭제를 막는다.
+  // 새 페이지는 원인 지하차도(underpassId)가 필수 (수정할 때는 서버가 무시)
   display: {
     title: '전광판 페이지 관리',
-    path: '/api/display/equipments/{equipId}/pages',
-    parents: [num('equipId', '전광판 설비 번호', true)],
+    path: '/api/display/vms/{vmsId}/pages',
+    parents: [source('vmsId', '전광판', 'vms', true)],
     columns: [
       ['pageNo', '페이지'],
       ['content', '표시 문구'],
+      ['underpassName', '원인 지하차도'],
       ['updatedAt', '수정 시각'],
     ],
-    fields: [source('presetId', '기본 문구 선택', 'presets'), area('content', '표시 문구')],
+    fields: [
+      source('underpassId', '원인 지하차도', 'underpasses', true),
+      source('presetId', '기본 문구 선택', 'presets'),
+      area('content', '표시 문구'),
+    ],
     create: true,
     edit: true,
     remove: true,
@@ -635,6 +642,8 @@ export const resourceRoutes: Record<string, string> = {
   '/my-alerts': 'my-alerts',
 }
 export const valueLabels: Record<string, string> = {
+  RISK_LEVEL_UP: '위험도 상승',
+  RISK_LEVEL_DOWN: '위험도 하락',
   NORMAL: '정상',
   BLOCKED: '통제',
   SAFE: '안전',
@@ -694,7 +703,7 @@ Object.assign(valueLabels, { ACTIVE: '활성', WITHDRAWN: '탈퇴' })
 
 resourceRoutes['/admin-app/screen-4'] = 'facilities'
 resourceRoutes['/admin-app/screen-5'] = 'facilities'
-resourceRoutes['/admin-app/screen-13'] = 'alerts'
+resourceRoutes['/admin-app/screen-13'] = 'manager-notifications'
 
 cameraFields[0]!.required = true
 

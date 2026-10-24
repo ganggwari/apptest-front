@@ -1,3 +1,4 @@
+import { apiUrl } from '../services/apiOrigin'
 export class BackendError extends Error {
   constructor(
     message: string,
@@ -30,7 +31,7 @@ export async function backend<T = any>(
   options.signal?.addEventListener('abort', abort, { once: true })
   if (options.signal?.aborted) controller.abort()
   try {
-    const r = await fetch(path, {
+    const r = await fetch(apiUrl(path), {
       method: options.method || 'GET',
       credentials: 'include',
       cache: 'no-store',

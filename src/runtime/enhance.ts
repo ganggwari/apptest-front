@@ -2,12 +2,10 @@ import { uiIconSvg } from '../utils/ui-icons'
 import { organizeSidebar } from './sidebar'
 import { meeting } from './meeting'
 import { watch } from 'vue'
-import { useAdminProfile } from '../stores/adminProfile'
 import { loadKakao, geocode } from '../services/kakao'
 export function enhance(name: string, ctx: any) {
   const root = ctx.root as HTMLElement
   const store = ctx.store
-  const admin = useAdminProfile()
   const popup = root.querySelector<HTMLElement>('#bell-pop'),
     bellButton = root.querySelector<HTMLElement>('#bell-btn')
   if (popup && bellButton) {
@@ -63,11 +61,15 @@ export function enhance(name: string, ctx: any) {
     }
   }
   const stopIdentity = watch(
-    () => [admin.region, admin.profile.name],
+    () => store.account?.name,
     () => {
       root
         .querySelectorAll<HTMLElement>('.hdr .user')
-        .forEach((el) => (el.textContent = `${admin.region} · ${admin.profile.name}님`))
+        .forEach((el) => (el.textContent = `${store.account?.name || '관리자'}님`))
+      root.querySelectorAll<HTMLElement>('.ro').forEach((el) => {
+        if (el.textContent?.includes('(로그인 계정 자동 기록)'))
+          el.textContent = `${store.account?.name || '관리자'} (로그인 계정 자동 기록)`
+      })
     },
     { immediate: true },
   )
@@ -98,6 +100,11 @@ export function enhance(name: string, ctx: any) {
   theme.className = 'iconbtn theme-toggle'
   theme.innerHTML = uiIconSvg('theme')
   theme.setAttribute('aria-label', '라이트·다크 모드 전환')
+  const stopTheme = watch(() => store.theme, (value) => {
+    theme.setAttribute('aria-pressed', String(value === 'dark'))
+    theme.title = value === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'
+  }, { immediate: true })
+  ctx.on(root, 'page-dispose', stopTheme)
   ctx.on(theme, 'click', () => store.themeToggle())
   root.querySelector('.hdr-r,.top .me,.top .in')?.append(theme)
   const bell = root.querySelector('#bell-btn')

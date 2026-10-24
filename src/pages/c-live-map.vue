@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { apiUrl } from '../services/apiOrigin'
 import RiskLevelBadge from '../components/RiskLevelBadge.vue'
 import { useRiskChartClock } from '../composables/useRiskChartClock'
 import { mapMarkerSvg } from '../utils/map-marker'
@@ -20,24 +21,23 @@ import BackendResource from './backend-resource.vue'
 import { backendResources } from '../data/backendResources'
 import { busanDistricts, busanDistrict } from '../utils/busan-districts'
 import { getWeather } from '../services/weather'
-import { loadKakao } from '../services/kakao'
 let disposeMapScroll: (() => void) | undefined
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { displayDate, dateParts } from '../utils/display-date'
 import { RouterLink, useRoute } from 'vue-router'
-import InternalUnderpassModal from '../components/InternalUnderpassModal.vue'
 import TrafficMapLayers from '../components/TrafficMapLayers.vue'
 const trafficMap = shallowRef<any>(), trafficMaps = shallowRef<any>()
-const cctvOpen = ref(false)
+const mapControlsExpanded = ref(true)
 const currentRoute = useRoute()
 
-const props = withDefaults(defineProps<{ manager?: boolean; mapOnly?: boolean }>(), {
+const props = withDefaults(defineProps<{ manager?: boolean; mapOnly?: boolean; dashboardVisual?: boolean }>(), {
   manager: false,
 })
 const emit = defineEmits<{ controlChanged: [] }>()
 const appMap = computed(() => !props.manager && currentRoute.path.startsWith('/customer-app/'))
 const appDetail = computed(() => appMap.value && currentRoute.path.endsWith('/screen-6'))
+const adminAppMap = computed(() => props.mapOnly && currentRoute.path.startsWith('/admin-app/'))
 const sheetOpen = ref(false),
   sheetHeight = ref<number | null>(null)
 let sheetDrag: { id: number; y: number; height: number; limit: number } | undefined,
@@ -70,6 +70,14 @@ function toggleSheet() {
   }
   sheetOpen.value = !sheetOpen.value
 }
+function collapseSheetOutside(event: PointerEvent) {
+  if ((!appMap.value && !adminAppMap.value) || !sheetOpen.value || sheetDrag) return
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (target.closest('.app-map-sheet,.admin-facility-sheet,dialog[open]')) return
+  sheetOpen.value = false
+  sheetHeight.value = null
+}
 const sheetStyle = computed(() =>
   appMap.value || props.mapOnly
     ? {
@@ -79,7 +87,7 @@ const sheetStyle = computed(() =>
     : undefined,
 )
 // 고객과 관리자에서 조회하는 공개 시설 목록입니다.
-const API_BASE_URL = ''
+
 const app = useApp()
 const STALE_AFTER_MS = 120000
 // 백엔드(back/final) UnderpassController 기준. 목록 항목에 현재 상태(currentStatus/currentRiskLevel)가 함께 옵니다.
@@ -254,13 +262,17 @@ const customerRoot = ref<HTMLElement>(),
   riskForecast = ref<Json[]>([]),
   forecastError = ref('')
 function defaultDistrict() {
-  const districts = (app.account?.regions || []).map((region) => busanDistrict(region.name))
-  return districts.length && districts.every((name) => name && name === districts[0])
-    ? districts[0]!
-    : ''
+  const districts = [...new Set(
+    (app.account?.regions || []).map((region) => busanDistrict(region.name)).filter(Boolean),
+  )]
+  // 여러 담당 구 중 첫 구에 시설이 없어도 다른 담당 구의 시설을 가리지 않습니다.
+  return districts.length === 1 ? districts[0]! : ''
 }
-const district = ref(props.manager && !props.mapOnly ? defaultDistrict() : ''),
+const district = ref(props.manager ? defaultDistrict() : ''),
   clusterFacilityIds = ref<string[]>([])
+watch(() => app.account?.regions?.map(region => `${region.id}:${region.name}`).join('|'), () => {
+  if (props.manager) district.value = defaultDistrict()
+})
 const managerPanelExpanded = ref(true),
   managerOperations = ref<InstanceType<typeof BackendResource>>()
 function selectManagerRow(id: string) {
@@ -410,6 +422,8 @@ function locateUser() {
   )
 }
 let viewportObserver: ResizeObserver | undefined
+let toolbarObserver: ResizeObserver | undefined
+let adminSheetObserver: ResizeObserver | undefined
 function sizeCustomerMap() {
   const root = customerRoot.value
   if (!root) return
@@ -595,7 +609,7 @@ function formatTime(value: string): string {
   return Number.isFinite(time) ? new Date(time).toLocaleString('ko-KR') : '미제공'
 }
 async function request(path: string, signal: AbortSignal): Promise<unknown> {
-  const response = await fetch(API_BASE_URL + path, {
+  const response = await fetch(apiUrl(path), {
     method: 'GET',
     credentials: 'include',
     headers: { Accept: 'application/json' },
@@ -638,6 +652,18 @@ async function collection(path: string, signal: AbortSignal): Promise<Json[]> {
   }
   throw new Error('전체 목록을 불러오지 못했습니다. 조회 범위를 확인해 주세요.')
 }
+// 담당 지역은 등록 시설이 아직 없어도 기본 선택을 유지합니다.
+const availableDistricts = computed(() => {
+  const populated = new Set(
+    facilities.value.map((facility) => busanDistrict(facility.assignedRegionName, facility.address)),
+  )
+  if (props.manager)
+    for (const region of app.account?.regions || []) populated.add(busanDistrict(region.name))
+  return busanDistricts.filter((name) => populated.has(name))
+})
+watch(availableDistricts, (names) => {
+  if (district.value && !names.some((name) => name === district.value)) district.value = ''
+})
 const filtered = computed(() =>
   facilities.value.filter(
     (f) =>
@@ -666,7 +692,7 @@ const missingCoordinates = computed(
 const unclassified = computed(() => facilities.value.filter((f) => !f.regionId).length)
 const page = ref(1),
   adaptivePageSize = ref(5)
-const pageSize = computed(() => (props.manager ? 15 : appMap.value ? 5 : adaptivePageSize.value))
+const pageSize = computed(() => (props.manager ? 10 : appMap.value ? 5 : adaptivePageSize.value))
 const listRows = computed(() =>
   !props.manager && clusterFacilityIds.value.length
     ? filtered.value.filter((f) => clusterFacilityIds.value.includes(f.id))
@@ -698,7 +724,7 @@ function measureList() {
     (text) => text.getBoundingClientRect().height + 26,
   )
   const rowHeight = Math.max(64, ...heights)
-  const capacity = Math.max(1, Math.min(30, Math.floor(list.clientHeight / rowHeight)))
+  const capacity = Math.max(1, Math.min(10, Math.floor(list.clientHeight / rowHeight)))
   if (capacity !== adaptivePageSize.value) {
     const first = (page.value - 1) * adaptivePageSize.value
     adaptivePageSize.value = capacity
@@ -1120,7 +1146,6 @@ function legendState(state: string) {
   return state === '정상' ? '안전' : state === '경고' ? '주의' : ['경계', '심각'].includes(state) ? '위험' : state
 }
 function toggleLegend(label: string) {
-  markerColorPreview.value = false
   statusFilter.value = ''
   legendFilter.value = legendFilter.value === label ? '' : label
   page.value = 1
@@ -1128,25 +1153,6 @@ function toggleLegend(label: string) {
   clusterFacilityIds.value = []
   if (selectedId.value && !filtered.value.some(row => row.id === selectedId.value)) closeFacility()
 }
-// Temporary visual preview only; facility status and server data stay intact.
-const markerColorPreview = ref(!props.manager && !props.mapOnly)
-const previewStates = ['통제', '위험', '주의', '관심', '안전']
-function previewMarkerState(row: Facility) {
-  if (!markerColorPreview.value) return stateLabel(row)
-  const rows = [...filtered.value]
-    .filter((f) => f.latitude !== null && f.longitude !== null)
-    .sort((a, b) => a.longitude! - b.longitude! || a.id.localeCompare(b.id))
-  return previewStates[
-    Math.max(
-      0,
-      rows.findIndex((f) => f.id === row.id),
-    ) % previewStates.length
-  ]!
-}
-watch(markerColorPreview, value => {
-  if (value) legendFilter.value = ''
-  drawMap()
-})
 watch(statusFilter, value => {
   if (value) legendFilter.value = ''
 })
@@ -1207,15 +1213,13 @@ function styleClusters(clusters: any[]) {
       a.getCenter().getLng() - b.getCenter().getLng() ||
       a.getCenter().getLat() - b.getCenter().getLat(),
   )
-  for (const [index, cluster] of ordered.entries()) {
+  for (const cluster of ordered) {
     const states = cluster.getMarkers().map((marker: any) => {
       const id = markers.find((item) => item.marker === marker)?.id
       const row = facilities.value.find((item) => item.id === id)
       return row ? stateLabel(row) : '미확인'
     })
-    const state = markerColorPreview.value
-      ? previewStates[index % previewStates.length]!
-      : markerStyles.find((style) =>
+    const state = markerStyles.find((style) =>
           states.some((state: string) => markerStyle(state).label === style.label),
         )?.label || '미확인'
     const content = cluster.getClusterMarker().getContent()
@@ -1419,11 +1423,11 @@ function drawMap() {
   } else {
     for (const row of filtered.value) {
       if (row.latitude === null || row.longitude === null) continue
-      const state = previewMarkerState(row)
+      const state = stateLabel(row)
       const marker = new maps.Marker({
         map,
         position: new maps.LatLng(row.latitude, row.longitude),
-        title: `${row.name}${props.manager ? (ownsFacility(row) ? ' · 담당 시설' : ' · 담당 외 시설') : ''} · ${markerColorPreview.value ? '색상 미리보기 · ' : ''}${state}`,
+        title: `${row.name}${props.manager ? (ownsFacility(row) ? ' · 담당 시설' : ' · 담당 외 시설') : ''} · ${state}`,
         image: markerImage(state, !props.manager || ownsFacility(row), selectedId.value === row.id),
         zIndex: selectedId.value === row.id ? 12 : markerStyle(state).zIndex,
       })
@@ -1480,13 +1484,34 @@ async function resolveRegions() {
     drawMap()
   }
 }
+const KAKAO_JAVASCRIPT_KEY = import.meta.env.VITE_KAKAO_MAP_KEY || ''
 let sdkErrorCleanup: (() => void) | undefined
 async function initializeMap() {
-  try {
-    await loadKakao() // 카카오 SDK, 실패하면 OpenStreetMap 호환 계층으로 자동 대체
-  } catch {
-    mapError.value = '지도를 불러오지 못했습니다. 아래 목록을 이용해 주세요.'
+  if (!KAKAO_JAVASCRIPT_KEY) {
+    mapError.value = '카카오 지도 키를 설정하면 실제 시설 위치를 표시합니다.'
     return
+  }
+  if (!(window as unknown as { kakao?: any }).kakao?.maps?.load) {
+    let script = document.querySelector<HTMLScriptElement>(
+      'script[src*="dapi.kakao.com/v2/maps/sdk.js"]',
+    )
+    const isNew = !script
+    if (!script) {
+      script = document.createElement('script')
+      script.id = 'kakao-map-sdk'
+      script.async = true
+      script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(KAKAO_JAVASCRIPT_KEY)}&libraries=services,clusterer&autoload=false`
+    }
+    const onError = () => {
+      if (!alive) return
+      clearInterval(sdkPoll)
+      mapError.value =
+        '카카오 지도 스크립트를 불러오지 못했습니다. JavaScript 키, 카카오맵 사용 설정, 등록된 사이트 주소와 네트워크를 확인해 주세요.'
+    }
+    script.addEventListener('error', onError)
+    const sdkScript = script
+    sdkErrorCleanup = () => sdkScript.removeEventListener('error', onError)
+    if (isNew) document.head.appendChild(script)
   }
   const start = Date.now()
   sdkPoll = window.setInterval(() => {
@@ -1514,7 +1539,8 @@ async function initializeMap() {
             level: props.manager || appMap.value ? 7 : 12,
             scrollwheel: false,
           })
-          disposeMapScroll = pageFriendlyMapScroll(mapElement.value, map)
+          disposeMapScroll = pageFriendlyMapScroll(mapElement.value, map,
+            /^\/(admin|customer)-app\//.test(currentRoute.path))
           trafficMaps.value = maps
           trafficMap.value = map
           clusterer = new maps.MarkerClusterer({
@@ -1659,6 +1685,19 @@ useBackendEvents((event) => {
 })
 onMounted(() => {
   sizeCustomerMap()
+  if (props.mapOnly && customerRoot.value) {
+    const root = customerRoot.value
+    const toolbar = root.querySelector<HTMLElement>('.map-overlay-toolbar')
+    if (toolbar) {
+      toolbarObserver = new ResizeObserver(() => root.style.setProperty('--admin-map-toolbar-height', `${Math.ceil(toolbar.getBoundingClientRect().bottom - root.getBoundingClientRect().top - 12)}px`))
+      toolbarObserver.observe(toolbar)
+    }
+    const sheet = root.querySelector<HTMLElement>('.admin-facility-sheet')
+    if (adminAppMap.value && sheet) {
+      adminSheetObserver = new ResizeObserver(() => root.style.setProperty('--admin-sheet-actual-height', `${sheet.getBoundingClientRect().height}px`))
+      adminSheetObserver.observe(sheet)
+    }
+  }
   viewportObserver = new ResizeObserver(sizeCustomerMap)
   const header = document.querySelector('.customer-header')
   if (header) viewportObserver.observe(header)
@@ -1669,8 +1708,11 @@ onMounted(() => {
   void refresh()
   document.addEventListener('visibilitychange', handleVisibility)
   document.addEventListener('pointerdown', dismissPopupOutside, { passive: true })
+  document.addEventListener('pointerdown', collapseSheetOutside, { capture: true, passive: true })
 })
 onBeforeUnmount(() => {
+  toolbarObserver?.disconnect()
+  adminSheetObserver?.disconnect()
   clearTimeout(streamRefresh)
   listObserver?.disconnect()
   viewportObserver?.disconnect()
@@ -1694,6 +1736,7 @@ onBeforeUnmount(() => {
   observer?.disconnect()
   document.removeEventListener('visibilitychange', handleVisibility)
   document.removeEventListener('pointerdown', dismissPopupOutside)
+  document.removeEventListener('pointerdown', collapseSheetOutside, true)
   infoWindow?.close()
   closeClusterPopup()
   if (map) {
@@ -1705,14 +1748,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main v-if="props.mapOnly" ref="customerRoot" class="map-only-live"
+  <main v-if="props.mapOnly" ref="customerRoot" class="map-only-live" :class="{'admin-app-map':adminAppMap}"
+    :style="adminAppMap?{'--map-sheet-height':sheetHeight!==null?sheetHeight+'px':sheetOpen?'72%':'68px'}:undefined"
     ><div ref="mapElement" class="customer-map-canvas" aria-label="카카오 지도"></div>
+    <form v-if="adminAppMap" class="admin-map-search" @submit.prevent="sheetOpen=true;searchFacilities()">
+      <input v-model.trim="query" type="search" placeholder="지하차도 이름 검색" aria-label="지하차도 이름 검색" /><button type="submit">검색</button>
+    </form>
     <div class="map-overlay-toolbar"><ul class="map-only-legend" aria-label="마커 등급 안내"
       ><li v-for="style in markerLegendStyles" :key="style.label"
         ><button type="button" class="legend-filter-button" :aria-pressed="legendFilter===style.label" :class="{'legend-muted':legendFilter&&legendFilter!==style.label}" @click="toggleLegend(style.label)"><i :style="{background:style.color}"></i>{{style.label}}</button></li
       ><li v-if="props.manager"><span style="background:#9aa3ae"></span>담당 외 시설</li></ul>
-      <TrafficMapLayers :map="trafficMap" :maps="trafficMaps" /></div>
-    <div class="kakao-map-controls"
+      <TrafficMapLayers :map="trafficMap" :maps="trafficMaps" :toggle-controls="adminAppMap" /></div>
+    <div class="admin-map-control-dock">
+      <button v-if="adminAppMap" type="button" class="map-control-toggle" :aria-expanded="mapControlsExpanded" aria-label="지도 조작 접기·펼치기" @click="mapControlsExpanded=!mapControlsExpanded">지도 <span aria-hidden="true">{{mapControlsExpanded?'›':'‹'}}</span></button>
+    <div v-show="!adminAppMap||mapControlsExpanded" class="kakao-map-controls"
       ><button
         type="button"
         class="map-fit-all"
@@ -1725,7 +1774,7 @@ onBeforeUnmount(() => {
         </button
       ><button class="ui-icon-button" type="button" aria-label="지도 축소" @click="zoomMap(1)">
           <UiIcon name="minus" />
-        </button></div
+        </button></div></div
     ><p v-if="mapError" class="map-error-note" role="status">{{mapError}}</p
     ><div v-if="selected" class="map-only-selection"
       ><RouterLink :to="'/admin-app/screen-5?id='+selected.id"
@@ -1777,7 +1826,6 @@ onBeforeUnmount(() => {
           type="search"
           aria-label="지하차도 이름 검색"
           placeholder="지하차도 이름 검색"
-          @input="sheetOpen=true"
         /><button type="submit">검색</button></form
       >
    <section class="mapw" aria-label="지하차도 지도">
@@ -1787,16 +1835,10 @@ onBeforeUnmount(() => {
             ><span v-for="style in markerLegendStyles" :key="style.label"
               ><button type="button" class="legend-filter-button" :aria-pressed="legendFilter===style.label" :class="{'legend-muted':legendFilter&&legendFilter!==style.label}" @click="toggleLegend(style.label)"><i :style="{background:style.color}"></i>{{style.label}}</button></span
             ><span><i style="background:#1671d9"></i>내 위치</span></div
-          ><button
-            type="button"
-            class="marker-preview-toggle"
-            :aria-pressed="markerColorPreview"
-            @click="markerColorPreview=!markerColorPreview"
-            >{{markerColorPreview?'색상 미리보기 중 · 실제 상태 보기':'마커 색상 미리보기'
-            }}<small v-if="markerColorPreview">안전·주의·관심·위험·통제 색상 확인용</small></button
-          ></div
-        >
-    <div class="kakao-map-controls" aria-label="지도 조작"
+          ><TrafficMapLayers :map="trafficMap" :maps="trafficMaps" toggle-controls /></div>
+    <div class="customer-map-control-dock">
+      <button type="button" class="map-control-toggle" :aria-expanded="mapControlsExpanded" aria-label="지도 조작 접기·펼치기" @click="mapControlsExpanded=!mapControlsExpanded">지도 <span aria-hidden="true">{{mapControlsExpanded?'›':'‹'}}</span></button>
+    <div v-show="mapControlsExpanded" class="kakao-map-controls" aria-label="지도 조작"
           ><button
             type="button"
             class="map-fit-all"
@@ -1817,8 +1859,8 @@ onBeforeUnmount(() => {
             :disabled="findingPosition"
             @click="locateUser"
             ><UiIcon name="location" /></button
-        ></div>
-    <div class="map-left-tools"><TrafficMapLayers :map="trafficMap" :maps="trafficMaps" /><MapWeatherWidget /></div>
+        ></div></div>
+    <div class="map-left-tools"><MapWeatherWidget /></div>
 
     <div v-if="mapError" class="map-error-note" role="status">{{mapError}}</div>
     <div v-if="selected&&selected.status==='통제'" class="alertbar" role="status"
@@ -1970,9 +2012,6 @@ onBeforeUnmount(() => {
                 >엷은 점선: 최근 관측값을 현재까지 유지 (추가 관측 아님)</p
               ><p v-if="forecastError" class="sub">{{forecastError}}</p></div
             >
-      <button type="button" class="btn" @click="cctvOpen=true"
-              >▶ 내부 지하차도 보기</button
-            >
       <RouterLink v-if="appMap" :to="'/customer-app/screen-6?id='+selected.id"
               >상세 화면 보기 →</RouterLink
             ><div class="sub app-guidance"
@@ -2009,7 +2048,7 @@ onBeforeUnmount(() => {
             @change="chooseDistrict(($event.target as HTMLSelectElement).value)"
             ><option value="">부산 전체</option
             ><option
-              v-for="name in busanDistricts"
+              v-for="name in availableDistricts"
               :key="name"
               :value="name"
               >{{name}}</option
@@ -2028,14 +2067,13 @@ onBeforeUnmount(() => {
               :aria-pressed="statusFilter===value"
               @click="statusFilter=value!"
               >{{label}}</button
-            ></div
           ><button
             type="button"
             class="btn refresh-facilities"
             :disabled="loading"
             @click="searchFacilities"
             >{{loading?'조회 중…':'새로고침'}}</button
-          ></div
+          ></div></div
         >
     <p v-if="listError" class="facility-message" role="alert">{{listError}}</p
         ><p v-else-if="loading&&!facilities.length" class="facility-message" role="status"
@@ -2088,12 +2126,6 @@ onBeforeUnmount(() => {
         >
       </aside>
     </div>
-  <InternalUnderpassModal
-      v-model="cctvOpen"
-      :facility-name="selected?.name||''"
-      :facility-id="selected?.id"
-
-    />
   </main>
   <main v-else class="wire-page page-c-live-map manager-live-map">
     <form class="underpass-map-form" @submit.prevent="searchFacilities"
@@ -2104,7 +2136,7 @@ onBeforeUnmount(() => {
           @change="chooseDistrict(($event.target as HTMLSelectElement).value)"
           ><option value="">부산 전체</option
           ><option
-            v-for="name in busanDistricts"
+            v-for="name in availableDistricts"
             :key="name"
             :value="name"
             >{{name}}</option
@@ -2146,6 +2178,7 @@ onBeforeUnmount(() => {
       <p v-if="mapError" class="manager-sdk-error" role="status">{{mapError}}</p>
 <ManagerMapPanel
         v-model:expanded="managerPanelExpanded"
+        :dashboard-visual="props.dashboardVisual"
         :facility="selected"
         :cluster="clusterRows"
         :state="selected?stateLabel(selected):''"
@@ -2165,7 +2198,6 @@ onBeforeUnmount(() => {
         @select="selectManagerRow"
         @clear="closeFacility"
         @control="managerControl"
-        @cctv="cctvOpen=true"
       />
 <div class="kakao-map-controls manager-map-controls" aria-label="지도 조작"
         ><button
@@ -2200,12 +2232,6 @@ onBeforeUnmount(() => {
       operations-only
       resource-key="facilities"
       @saved="afterManagerControl"
-    />
-<InternalUnderpassModal
-      v-model="cctvOpen"
-      :facility-name="selected?.name||''"
-      :facility-id="selected?.id"
-
     />
   </main>
 </template>

@@ -8,16 +8,23 @@ import BackendLayout from '../components/BackendLayout.vue'
 import { backend, queryString, asPage } from '../services/backend'
 import { dashboardReports } from '../data/dashboardReports'
 import { valueLabels } from '../data/backendResources'
+import { useApp } from '../stores/app'
+const app = useApp()
 const route = useRoute(),
   selected = ref(String(route.query.report || 'kpi')),
   report = computed(() => dashboardReports[selected.value] || dashboardReports.kpi!),
-  values = reactive({ regionId: '', underpassId: '', days: 7 }),
+  values = reactive({ regionId: String(route.query.regionId ?? (app.account?.role === 'REGIONAL_ADMIN' ? app.account.regions?.[0]?.id ?? '' : '')), underpassId: '', days: 7 }),
   rows = ref<any[]>([]),
   error = ref(''),
   loading = ref(false)
 const regions = ref<any[]>([]),
   facilities = ref<any[]>([]),
   lookupAbort = new AbortController()
+const page=ref(1)
+const pages=computed(()=>Math.max(1,Math.ceil(rows.value.length/10)))
+const pageRows=computed(()=>rows.value.slice((page.value-1)*10,page.value*10))
+watch(pages,count=>{page.value=Math.min(page.value,count)})
+watch(selected,()=>{page.value=1})
 onMounted(async () => {
   const results = await Promise.allSettled([
     backend('/api/regions', { signal: lookupAbort.signal }),
@@ -148,7 +155,7 @@ onBeforeUnmount(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(row,index) in rows" :key="index">
+            <tr v-for="(row,index) in pageRows" :key="index">
               <td v-for="[key] in report.columns" :key="key">
                 {{valueLabels[row[key]]||(row[key]??'—')}}
               </td>
@@ -159,6 +166,11 @@ onBeforeUnmount(() => {
           </tbody>
         </table>
       </div>
+      <nav v-if="!loading && rows.length" class="service-pagination" aria-label="보고서 페이지">
+        <button :disabled="page===1" @click="page--">이전</button>
+        <span>{{page}} / {{pages}} 페이지</span>
+        <button :disabled="page===pages" @click="page++">다음</button>
+      </nav>
     </section>
   </BackendLayout>
 </template>
