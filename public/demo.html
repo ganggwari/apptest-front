@@ -68,7 +68,14 @@
   </section>
 
   <section>
-    <h2>③ 호우 시나리오 (선택 — 날씨 악화부터 자동 진행)</h2>
+    <h2>③ 예지보전 장비 위험 상승 — 관리자 알림 시연</h2>
+    <p class="muted">관리자 로그인 후 장비를 불러와 점수를 85점으로 올리면 Spring이 예지보전 이벤트·관리자 FCM/SSE 알림을 생성합니다. 센서 백필은 실행하지 않습니다.</p>
+    <div class="row"><button id="pmReload" class="gray">설비 목록 불러오기</button><button id="pmReleaseAll" class="gray">전체 점수 고정 해제</button></div>
+    <div id="pmEquipments" class="muted">설비 목록을 불러오세요.</div>
+  </section>
+
+  <section>
+    <h2>④ 호우 시나리오 (선택 — 날씨 악화부터 자동 진행)</h2>
     <div id="regions" class="muted">지역 불러오는 중…</div>
     <div class="row">속도 <select id="speed"><option value="1">1배 (약 2분 50초)</option><option value="2">2배</option><option value="3">3배 (약 1분)</option></select>
       <button id="rainStart">호우 시작</button><button id="rainStop" class="red">중지</button></div>
@@ -77,7 +84,7 @@
   </section>
 
   <section>
-    <h2>④ 가상 주행 내비 (GPS 시뮬레이션)</h2>
+    <h2>⑤ 가상 주행 내비 (GPS 시뮬레이션)</h2>
     <p class="muted">고객 앱의 <a href="/customer-app/screen-7" target="_blank">길찾기 화면</a>에서 <b>시연용 버튼</b>(초량/북항/충장 경로)을 누르고 <b>가상 주행</b>을 켠 뒤 <b>안내 시작</b>을 누르면,
       실제 GPS 없이 차가 경로를 따라 움직이며 회전 안내 문구·음성이 나옵니다(1·2·4배속, 일시정지 가능).
       주행 중에 위 ①에서 해당 지하차도의 단계를 <b>경계</b>로 올리면 약 2~4초 안에 "위험 상태가 바뀌어 경로를 다시 찾습니다"가 뜨며 차단된 지하차도를 피하는 경로로 자동 재탐색합니다.
@@ -87,12 +94,14 @@
   <section><h2>응답</h2><pre id="out">-</pre></section>
 </main>
 <script>
+const API_BASE = location.hostname === 'localhost' ? '' : 'https://apptest-backend-tj3a.onrender.com'
+const remote = (path) => path.startsWith('/api/') ? API_BASE + path : path
 const $ = (id) => document.getElementById(id), out = $('out')
 const LV = [['SAFE','안전'],['WATCH','관심'],['CAUTION','주의'],['ALERT','경계'],['SEVERE','심각']]
 const show = (v) => (out.textContent = typeof v === 'string' ? v : JSON.stringify(v, null, 2))
 async function api(method, url, body, quiet) {
   try {
-    const r = await fetch(url, { method, credentials: 'include', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined })
+    const r = await fetch(remote(url), { method, credentials: 'include', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined })
     const j = await r.json().catch(() => null)
     if (r.status === 401 || r.status === 403) { if (!quiet) show('로그인(관리자)이 필요합니다. 앱에서 관리자 로그인 후 다시 시도하세요. (' + r.status + ')'); return null }
     if (!quiet) show(j ?? r.status)
@@ -142,11 +151,32 @@ api('GET', '/api/regions', null, true).then((j) => {
   const list = (j && j.data) || []
   $('regions').innerHTML = list.filter((r) => r.name !== '미배정').map((r) => `<label style="margin-right:10px"><input type="checkbox" value="${r.id}" ${r.name === '동구' ? 'checked' : ''}>${r.name}</label>`).join('') || '지역 없음'
 })
+
+async function loadPm() {
+  const j = await api('GET', '/api/demo/pm')
+  const list = Array.isArray(j?.data) ? j.data : []
+  const node = $('pmEquipments')
+  if (!list.length) { node.textContent = '표시할 설비가 없습니다. 관리자 로그인 및 시연 모드를 확인하세요.'; return }
+  node.replaceChildren()
+  for (const item of list) {
+    const id = Number(item.equipId ?? item.equipmentId ?? item.id)
+    if (!Number.isSafeInteger(id) || id <= 0) continue
+    const row = document.createElement('div'); row.className = 'row'; row.style.borderBottom = '1px solid #e5e9f0'; row.style.padding = '8px 0'
+    const info = document.createElement('span'); info.textContent = `${item.name ?? item.equipmentName ?? '설비'} (#${id}, ${item.type ?? item.equipmentType ?? '장비'}) · ${item.score ?? item.currentScore ?? '-'}점`;
+    const up = document.createElement('button'); up.textContent = '위험 85점 + 관리자 알림'; up.className = 'red'; up.onclick = async () => { await api('POST', '/api/demo/pm', {equipIds:[id],score:85}); await loadPm() }
+    const down = document.createElement('button'); down.textContent = '안전 5점'; down.className = 'gray'; down.onclick = async () => { await api('POST', '/api/demo/pm', {equipIds:[id],score:5}); await loadPm() }
+    const release = document.createElement('button'); release.textContent = '고정 해제'; release.className = 'gray'; release.onclick = async () => { await api('DELETE','/api/demo/pm',{equipIds:[id]}); await loadPm() }
+    row.append(info,up,down,release); node.append(row)
+  }
+}
+$('pmReload').onclick = loadPm
+$('pmReleaseAll').onclick = async () => { await api('DELETE','/api/demo/pm',{}); await loadPm() }
+
 $('rainStart').onclick = () => api('POST', '/api/demo/scenarios/heavy-rain', { regionIds: [...document.querySelectorAll('#regions input:checked')].map((i) => Number(i.value)), speed: Number($('speed').value) }).then(poll)
 $('rainStop').onclick = () => api('POST', '/api/demo/scenarios/stop').then(poll)
 async function poll() {
   try {
-    const r = await fetch('/api/demo/scenarios/current', { credentials: 'include' }), j = await r.json(), d = j && j.data
+    const r = await fetch(remote('/api/demo/scenarios/current'), { credentials: 'include' }), j = await r.json(), d = j && j.data
     if (d && d.running) { $('phase').textContent = d.phaseLabel + ' · ' + d.elapsedSec + ' / ' + d.totalSec + '초'; $('bar').style.width = Math.min(100, d.elapsedSec / d.totalSec * 100) + '%' }
     else { $('phase').textContent = '대기 중'; $('bar').style.width = '0' }
   } catch (e) {}
@@ -161,11 +191,11 @@ async function who() {
 }
 async function doLogin(kind, loginId, password) {
   try {
-    const r = await fetch('/api/' + kind + '/login', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId, password: password || loginId }) })
+    const r = await fetch(remote('/api/' + kind + '/login'), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId, password: password || loginId }) })
     const j = await r.json().catch(() => null)
     show(r.ok ? (loginId + ' 로그인 완료') : ('로그인 실패(' + r.status + '): ' + ((j && j.message) || '')))
   } catch (e) { show('요청 실패: ' + e.message) }
-  await who(); await loadLevels(true); $('loadCars').click()
+  await who(); await loadLevels(true); $('loadCars').click(); await loadPm()
 }
 $('loginBtn').onclick = () => doLogin($('lkind').value, $('lid').value.trim(), $('lpw').value)
 $('logoutBtn').onclick = async () => { await api('POST', '/api/auth/logout'); await who(); $('levels').textContent = '로그아웃됨 — 관리자로 로그인하세요'; rows = [] }

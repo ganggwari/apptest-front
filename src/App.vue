@@ -35,7 +35,17 @@ import PublicChatbot from './components/PublicChatbot.vue'
 import { mobileInteractions } from './runtime/mobileInteractions'
 import { useApp } from './stores/app'
 import { enableFcm, resetFcmOwner } from './services/fcmPush'
+import { unlockManagerAlertAudio, playManagerAlert } from './runtime/managerAlertSound'
 useBackendStream()
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', unlockManagerAlertAudio, { passive: true })
+  window.addEventListener('keydown', unlockManagerAlertAudio)
+  window.addEventListener('puf-fcm-message', ((event: Event) => {
+    if (app.account?.role !== 'REGIONAL_ADMIN') return
+    const payload = (event as CustomEvent).detail
+    playManagerAlert(payload?.data?.notificationId, payload?.data?.urgent === 'true')
+  }) as EventListener)
+}
 const app = useApp()
 const notificationGlow = useNotificationGlow()
 watch(() => [app.account?.id, app.account?.role] as const, ([id, role], previous) => {
@@ -48,7 +58,10 @@ watch(() => [app.account?.id, app.account?.role] as const, ([id, role], previous
   }
 }, { immediate: true })
 useBackendEvents(({ name, data }) => {
-  if (name === 'notification-new') notificationGlow.mark('notification', data.id)
+  if (name === 'notification-new') {
+    notificationGlow.mark('notification', data.id)
+    if (app.account?.role === 'REGIONAL_ADMIN') playManagerAlert(data.id, data.isUrgent === true || data.urgent === true)
+  }
   if (name === 'notice-new') notificationGlow.mark('notice', data.id ?? data.noticeId)
   if (name === 'inquiry-new') notificationGlow.mark('inquiry', data.id ?? data.inquiryId)
 })

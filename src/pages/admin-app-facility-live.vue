@@ -5,15 +5,12 @@ import { useRoute } from 'vue-router'
 import { patchFacility, facilityEvents, appendRiskHistory } from '../services/streamUpdates'
 import { useBackendEvents } from '../composables/useBackendEvents'
 import { ownsFacility } from '../services/facilityAccess'
-import { backend, asPage } from '../services/backend'
+import { backend } from '../services/backend'
 import { backendResources, valueLabels, type Action } from '../data/backendResources'
 import BackendResource from './backend-resource.vue'
-import FacilityCctvViewer from '../components/FacilityCctvViewer.vue'
-import TunnelCctvDialog from '../components/TunnelCctvDialog.vue'
 const route = useRoute(),
   id = computed(() => String(route.query.id || '')),
   facility = ref<Record<string, any>>(),
-  cameras = ref<any[]>([]),
   operations = ref<InstanceType<typeof BackendResource>>(),
   error = ref(''),
   loading = ref(false)
@@ -22,7 +19,6 @@ async function load() {
   abort?.abort()
   if (!id.value) {
     facility.value = undefined
-    cameras.value = []
     return
   }
   const request = new AbortController()
@@ -31,21 +27,14 @@ async function load() {
   error.value = ''
   if (String(facility.value?.id ?? '') !== id.value) {
     facility.value = undefined
-    cameras.value = []
   }
   try {
     facility.value = await backend('/api/underpasses/' + encodeURIComponent(id.value), {
       signal: request.signal,
     })
-    cameras.value = asPage<any>(
-      await backend('/api/underpasses/' + encodeURIComponent(id.value) + '/cameras', {
-        signal: request.signal,
-      }),
-    ).items
   } catch (e) {
     if (!request.signal.aborted) {
-      cameras.value = []
-      error.value = (e as Error).message
+        error.value = (e as Error).message
     }
   } finally {
     if (!request.signal.aborted) loading.value = false
@@ -107,8 +96,6 @@ function action(item: Action) {
           <b>{{facility.pendingReviewCount??'—'}}건</b>
         </div>
       </div>
-      <TunnelCctvDialog :facility-name="facility.name" />
-      <FacilityCctvViewer :cameras="cameras" :underpass-id="id" :facility-name="facility?.name" />
       <button
         type="button"
         class="app-control-primary"

@@ -824,3 +824,8 @@ dialog.navigation-weather-dialog {
 .navigation-hazard-note { padding: 11px 14px; margin: 8px 12px; border-radius: 10px; background: #fff4df; color: #6c3f0b; font-size: 13px; }
 .navigation-hazard-note[data-kind=blocked] { background: #ffe4e4; color: #9f2020; }
 .navigation-hazard-note[data-kind=info] { background: #e6f2ff; color: #174b7c; }
+
+/* 주행 중 지하차도 위험 변경 알림 (12초간 표시) */
+.navigation-reroute-alert { margin: 10px 12px; padding: 14px 12px; display: flex; align-items: center; gap: 10px; background: #b91c1c; color: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(100,0,0,.24); position: relative; z-index: 5; font-size: 14px; }
+.navigation-reroute-alert strong { flex: 1; line-height: 1.5; }
+.navigation-reroute-alert button { border: none; color: inherit; background: transparent; font-size: 24px; cursor: pointer; }

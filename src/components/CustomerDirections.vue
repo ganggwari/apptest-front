@@ -62,6 +62,23 @@ const hazardNote = ref<{ kind: 'blocked' | 'advisory' | 'info'; text: string } |
 let hazardVersion: number | null = null
 let hazardPoll: number | undefined
 let rerouting = false
+const rerouteAlert = ref('')
+let rerouteAlertTimeout: number | undefined
+let priorityVoiceUntil = 0
+function showRerouteAlert(message: string, speak = false) {
+  rerouteAlert.value = message
+  if (rerouteAlertTimeout !== undefined) window.clearTimeout(rerouteAlertTimeout)
+  rerouteAlertTimeout = window.setTimeout(() => { rerouteAlert.value = '' }, 12000)
+  if (speak && speechSupported) {
+    // 차단 경고는 일반 턴 안내보다 우선하며, 음성 안내 토글과 독립적으로 1회 알립니다.
+    priorityVoiceUntil = Date.now() + 9000
+    speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(message)
+    utterance.lang = 'ko-KR'
+    utterance.rate = 0.95
+    speechSynthesis.speak(utterance)
+  }
+}
 
 const active = computed(() => routes.value[selected.value]),
   guides = computed(() => active.value?.sections.flatMap((section) => section.guides || []) || [])
@@ -554,11 +571,19 @@ async function autoReroute() {
     originText.value = origin.value.name
     await search()
     if (routes.value.length) {
-      hazardNote.value = {
-        kind: 'info', text: `위험 상태가 변경되어 현재 위치에서 경로를 다시 탐색했습니다. ${hazardNote.value?.text || ''}`,
-      }
+      const safety = hazardNote.value
+      const blocked = safety?.kind === 'blocked'
+      const warning = blocked
+        ? '전방 지하차도가 차단되었습니다. 안전한 우회 경로로 변경합니다.'
+        : safety?.kind === 'advisory'
+          ? '전방 지하차도 위험도가 변경되었습니다. 경로를 다시 안내합니다.'
+          : safety?.text?.includes('확인에 실패')
+            ? '위험 정보를 확인하지 못했습니다. 경로의 안전을 보장할 수 없습니다.'
+            : '주변 위험 정보가 변경되어 경로를 다시 탐색했습니다.'
+      hazardNote.value = { kind: blocked ? 'blocked' : safety?.kind === 'advisory' ? 'advisory' : 'info', text: `${warning} ${safety?.text || ''}` }
       startNavigation()
       if (wasDemo && paused) toggleDemoPause()
+      showRerouteAlert(warning, blocked)
     } else {
       // 자동 재탐색 실패로 안내 화면이 비지 않도록 이전 경로를 복원한다.
       if (oldRoute) routes.value = [oldRoute]
@@ -566,6 +591,7 @@ async function autoReroute() {
       originText.value = oldOriginText
       position.value = oldPosition
       hazardNote.value = { kind: 'info', text: '재탐색에 실패했습니다. 안전 여부가 확인될 때까지 주행하지 마세요.' }
+      showRerouteAlert('우회 경로를 찾지 못했습니다. 안전 여부를 확인하세요.', true)
       await nextTick()
       draw()
     }
@@ -617,6 +643,7 @@ watch([guideIndex, navigating, voice], () => {
     demoPaused.value ||
     !voice.value ||
     !speechSupported ||
+    Date.now() < priorityVoiceUntil ||
     !currentGuide.value ||
     offRoute.value
   )
@@ -633,6 +660,7 @@ watch(voice, (enabled) => {
 })
 onBeforeUnmount(() => {
   stopNavigation()
+  if (rerouteAlertTimeout !== undefined) window.clearTimeout(rerouteAlertTimeout)
   guideDialog.value?.close()
   cameraDialog.value?.close()
   infoDialog.value?.close()
@@ -788,6 +816,10 @@ onBeforeUnmount(() => {
             ></div
           ></section
         >
+<div v-if="rerouteAlert" class="navigation-reroute-alert" role="alert" aria-live="assertive">
+  <span aria-hidden="true">⚠️</span><strong>{{ rerouteAlert }}</strong>
+  <button type="button" @click="rerouteAlert = ''" aria-label="경고 닫기">×</button>
+</div>
 <p v-if="hazardNote" class="navigation-hazard-note" :data-kind="hazardNote.kind" role="status">{{hazardNote.text}}</p>
 <p v-if="mapError" class="navigation-map-error" role="status">{{mapError}}</p
         ><p v-if="gpsError" class="navigation-gps-error" role="alert">{{gpsError}}</p>
