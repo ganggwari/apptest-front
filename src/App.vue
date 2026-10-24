@@ -38,7 +38,9 @@ import { enableFcm, resetFcmOwner } from './services/fcmPush'
 useBackendStream()
 const app = useApp()
 const notificationGlow = useNotificationGlow()
-watch(() => [app.account?.id, app.account?.role], ([id, role], [oldId, oldRole] = []) => {
+watch(() => [app.account?.id, app.account?.role] as const, ([id, role], previous) => {
+  const oldId = previous?.[0]
+  const oldRole = previous?.[1]
   notificationGlow.reset()
   if (!id || !role) { resetFcmOwner(); return }
   if ((id !== oldId || role !== oldRole) && 'Notification' in window && Notification.permission === 'granted') {

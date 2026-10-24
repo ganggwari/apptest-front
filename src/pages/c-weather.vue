@@ -191,7 +191,6 @@ async function fetchRiskForecast(signal?: AbortSignal) {
     const response = await fetch(apiUrl(`/api/underpasses/${id}/risk-forecast`), {
       credentials: 'include',
       signal,
-      credentials: 'include',
       cache: 'no-store',
     })
     if (!response.ok) throw new Error()
