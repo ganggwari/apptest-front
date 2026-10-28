@@ -36,7 +36,7 @@ function open(next: Target, first?: Mode) {
   error.value = ''
   dialog.value?.showModal()
 }
-defineExpose({ open })
+defineExpose({ open, close:()=>dialog.value?.close() })
 
 async function submit() {
   if (!target.value) return
@@ -54,7 +54,7 @@ async function submit() {
     else
       await backend(`/api/pm/events/${id}/status`, {
         method: 'PATCH',
-        body: { status: mode.value === 'start' ? 'IN_PROGRESS' : endStatus.value, content: text || undefined },
+        body: { status: mode.value === 'start' ? 'IN_PROGRESS' : endStatus.value, content: text || (mode.value === 'start' ? '점검을 시작했습니다.' : undefined) },
       })
     dialog.value?.close()
     emit('done')
@@ -66,7 +66,7 @@ async function submit() {
 }
 </script>
 <template>
-  <dialog ref="dialog" class="service-modal pm-action-modal" aria-labelledby="pm-action-title">
+  <WorkflowPage ref="dialog" class="service-modal pm-action-modal" aria-labelledby="pm-action-title">
     <form method="dialog" @submit.prevent="submit">
       <h2 id="pm-action-title">점검 처리 · {{target?.name}}</h2>
       <p class="pm-action-sub">
@@ -103,7 +103,7 @@ async function submit() {
         </button>
       </div>
     </form>
-  </dialog>
+  </WorkflowPage>
 </template>
 <style scoped>
 .pm-action-modal form { display: grid; gap: 12px; min-width: min(420px, 86vw); }

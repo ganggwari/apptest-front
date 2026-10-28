@@ -9,8 +9,10 @@ export interface CustomerNotification {
   body: string
   read: boolean
   createdAt: string
+  urgent?: boolean
   refType?: string
   refId?: number
+  regionId?: number | null
   severity?: string
   riskLevel?: string
   currentRiskLevel?: string
@@ -147,7 +149,7 @@ export const useCustomerNotifications = defineStore('customer-notifications', ()
               })
               message.onclick = () => {
                 window.focus()
-                window.location.assign('/my-alerts?notification=' + row.id)
+                window.location.assign('/customer-app/screen-12?notification=' + row.id)
                 message.close()
               }
             } catch {

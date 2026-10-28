@@ -1,12 +1,18 @@
 <script setup lang="ts">
+import {openCustomerGuide} from '../services/customerOnboarding'
+function openManagerGuide(){window.dispatchEvent(new Event('routel-manager-guide-open'))}
 import AdminPageDirectory from '../components/AdminPageDirectory.vue'
+import CustomerProfileSummary from '../components/CustomerProfileSummary.vue'
 import ServiceResource from './backend-resource.vue'
 import FeedbackToast from '../components/FeedbackToast.vue'
 import AccountActions from '../components/AccountActions.vue'
+import ManagerPushDevices from '../components/ManagerPushDevices.vue'
+import profileMascot from '../assets/mascot/routel-ru-transparent.png'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useApp } from '../stores/app'
 import { backend } from '../services/backend'
+import { detachPushToken } from '../services/devicePush'
 import BackendLayout from '../components/BackendLayout.vue'
 import ServiceFields from '../components/ServiceFields.vue'
 import { formatPhone } from '../utils/phone'
@@ -25,11 +31,24 @@ const route = useRoute(),
   loading = ref(true),
   busy = ref(false)
 const editing = ref(false)
+async function logoutManager() {
+  if (busy.value) return
+  busy.value = true
+  try {
+    try { await detachPushToken() } catch { /* Sign-out remains available if device cleanup fails. */ }
+    await backend('/api/auth/logout', { method:'POST' })
+    app.authVersion++
+    app.clearAccount()
+    await router.replace('/admin-app/screen-1')
+  } catch (e) { error.value = (e as Error).message }
+  finally { busy.value = false }
+}
 function cancelEdit() {
   for (const field of fields.value) values[field.key] = profile.value[field.key] || ''
   editing.value = false
 }
 const managerApp = computed(() => route.path.startsWith('/admin-app/'))
+const customerWeb = computed(() => !manager.value && !route.path.startsWith('/customer-app/'))
 const controller = new AbortController()
 const mobileCombined = computed(() => /^\/customer-app\/account\/(profile|emergency|cars)$/.test(route.path))
 const combined = computed(() => !manager.value && (route.path === '/my-home' || mobileCombined.value))
@@ -46,7 +65,7 @@ const pageTitle = computed(() =>
   mobileCombined.value
     ? '내 정보 관리'
     : manager.value
-    ? '관리자 마이페이지'
+    ? managerApp.value ? '마이페이지' : '관리자 마이페이지'
     : accountSection.value === 'withdraw'
       ? '회원 탈퇴'
       : accountSection.value === 'settings'
@@ -155,20 +174,21 @@ onBeforeUnmount(() => controller.abort())
 <template>
   <component :is="manager?BackendLayout:'div'"
     ><section class="service-workspace account-service" :class="{'manager-account-page':managerApp}"
-      ><h1>{{pageTitle}}</h1
-      ><FeedbackToast :message="message" /><p v-if="loading" role="status"
+      ><h1><AdminPageIcon />{{pageTitle}}</h1
+      ><button v-if="customerWeb&&profile.id" type="button" class="customer-guide-replay" @click="openCustomerGuide"><UiIcon name="help" />루와 사용법 보기</button><FeedbackToast :message="message" /><p v-if="loading" role="status"
         >정보를 불러오는 중입니다.</p
       ><p v-if="error" class="service-error" role="alert"
         >{{error}} <RouterLink :to="manager?'/admin-login':'/login'">로그인</RouterLink></p
       ><p v-if="message" class="service-message" role="status">{{message}}</p
       ><template v-if="profile.id"
+        ><section v-if="managerApp" class="manager-mypage-profile"><div class="manager-mypage-identity"><span class="manager-profile-avatar" aria-hidden="true"><img :src="profileMascot" alt="" width="44" height="44" /></span><div><small>ROUTEL 관리자</small><h2>{{profile.name}}님</h2></div></div><p>내 정보와 업무 설정을 관리하세요.</p><div class="manager-mypage-assignment"><span>{{profile.regions?.map((region:any)=>region.name).join(' · ')||'담당 지역 미지정'}}</span><span><UiIcon name="document" />{{profile.shift?.name||'근무조 미지정'}}</span></div></section
         ><component
           :is="managerApp?'details':'section'"
           v-if="manager||['summary','profile','settings'].includes(accountSection)"
           :id="!manager?'account-settings':undefined"
           class="account-panel"
-          ><summary v-if="managerApp" class="manager-profile-summary"><span class="manager-profile-avatar" aria-hidden="true">{{profile.name?.slice(0,1)}}</span><span><strong>{{profile.name}}님</strong><small>기본 정보 확인 및 수정</small></span><span class="manager-profile-chevron" aria-hidden="true">⌄</span></summary><h2>내 정보</h2
-          ><p>{{profile.name}} · {{profile.loginId}}</p
+          ><summary v-if="managerApp" class="manager-profile-summary"><UiIcon name="user" /><span><strong>내 정보 관리</strong></span><span class="manager-profile-chevron" aria-hidden="true">›</span></summary><h2 v-if="pageTitle!=='내 정보'">내 정보</h2
+          ><p v-if="!customerWeb||editing">{{profile.name}} · {{profile.loginId}}</p
           ><template v-if="manager"
             ><p
               >담당 지역: {{profile.regions?.map((region:any)=>region.name).join(' · ')||'미지정'}}</p
@@ -176,14 +196,14 @@ onBeforeUnmount(() => controller.abort())
               >근무조: {{profile.shift?.name||'미지정'}} {{profile.shift?.startTime||''}}–{{profile.shift?.endTime||''}}</p
             ><small>이름·담당 지역·근무조는 지정된 관리자 권한으로 변경됩니다.</small></template
           ><template v-if="!editing"
-            ><dl class="account-summary"
+            ><CustomerProfileSummary v-if="customerWeb" :profile="profile" @edit="editing=true" /><dl v-else class="account-summary"
               ><template v-for="field in fields" :key="field.key"
                 ><dt>{{field.label}}</dt
                 ><dd
                   >{{['phone','emergency'].includes(field.key)?formatPhone(profile[field.key])||'미등록':profile[field.key]||'미등록'}}</dd
                 ></template
               ></dl
-            ><button type="button" @click="editing=true">수정</button></template
+            ><button v-if="!customerWeb" type="button" @click="editing=true">수정</button></template
           ><form v-if="editing" @submit.prevent="save"
             ><ServiceFields
               :fields="fields"
@@ -211,7 +231,7 @@ onBeforeUnmount(() => controller.abort())
             ><button :disabled="busy" type="submit">비밀번호 변경</button></form
           ></section
         ><section v-if="!manager&&accountSection==='withdraw'" class="account-panel"
-          ><h2>회원 탈퇴</h2><p>탈퇴하면 계정과 연결된 정보를 더 이상 이용할 수 없습니다.</p
+          ><h2 v-if="pageTitle!=='회원 탈퇴'">회원 탈퇴</h2><p>탈퇴하면 계정과 연결된 정보를 더 이상 이용할 수 없습니다.</p
           ><form @submit.prevent="withdraw"
             ><label
               >본인 확인 비밀번호<PasswordInput
@@ -221,11 +241,11 @@ onBeforeUnmount(() => controller.abort())
             ><button :disabled="busy" type="submit">계정 탈퇴</button></form
           ></section
         ></template
-      ><nav v-if="managerApp" class="app-more-menu"
-        ><RouterLink to="/admin-app/history">점검 이력 <span>›</span></RouterLink
-        ><RouterLink to="/admin-app/notifications">알림 내역 <span>›</span></RouterLink
-        ><RouterLink to="/admin-app/contacts">관할 담당자 연락처 <span>›</span></RouterLink></nav
-      ><AdminPageDirectory v-else-if="manager" /><AccountActions v-if="manager" /></section
+      ><h2 v-if="managerApp" class="manager-mypage-group-title">업무·이용 안내</h2><nav v-if="managerApp" class="app-more-menu" aria-label="마이페이지 메뉴"
+        ><RouterLink to="/admin-app/history"><UiIcon name="document" />점검 이력 <span>›</span></RouterLink
+        ><RouterLink to="/admin-app/notifications"><UiIcon name="bell" />알림 내역 <span>›</span></RouterLink
+        ><RouterLink to="/admin-app/contacts"><UiIcon name="user" />관할 담당자 연락처 <span>›</span></RouterLink><button type="button" class="manager-guide-launch" @click="openManagerGuide"><UiIcon name="map" />루와 관리자 사용법 보기<span class="account-menu-chevron" aria-hidden="true">›</span></button><details class="manager-mypage-devices"><summary><UiIcon name="bell" />알림 기기 관리<span>›</span></summary><ManagerPushDevices /></details></nav
+      ><AdminPageDirectory v-else-if="manager" /><ManagerPushDevices v-if="manager&&!managerApp" /><AccountActions v-if="manager" /><button v-if="managerApp" type="button" class="manager-mypage-logout" :disabled="busy" @click="logoutManager"><UiIcon name="logout" />로그아웃</button></section
   ></component>
 </template>
 <style scoped src="../styles/pages/service-account.css"></style>

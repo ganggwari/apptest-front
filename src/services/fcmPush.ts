@@ -1,4 +1,5 @@
 import { backend } from './backend'
+import { registerPushToken, detachPushToken } from './devicePush'
 
 // Firebase Web configuration is public; NEVER place a Firebase service-account private key here.
 const firebaseConfig = {
@@ -77,9 +78,10 @@ export async function enableFcm(role: Role, id: string, requestPermission = fals
   if (token.length > 255) throw new Error('FCM 토큰이 백엔드 DB의 255자 제한을 초과합니다.')
   const owner = `${role}:${id}`
   const previous = localStorage.getItem(ownerKey)
-  // Avoid redundant requests, but always rebind token after a login/account change.
+  // 토큰 등록은 앱 공통 경로(devicePush)를 쓴다: 로그인 계정이 바뀌면 다시 등록하고, 로그아웃 때 같은 경로로 해제한다.
   if (owner !== lastOwner || token !== currentToken || previous !== owner) {
-    await backend(endpoint(role), { method: 'POST', body: { token, platform: platform() } })
+    await registerPushToken({ token, platform: platform() })
+    window.dispatchEvent(new Event('routel:push-device-updated'))
     lastOwner = owner
     currentToken = token
     localStorage.setItem(ownerKey, owner)
@@ -87,10 +89,13 @@ export async function enableFcm(role: Role, id: string, requestPermission = fals
   return true
 }
 export async function disableFcm(role: Role) {
-  const instance = await messaging()
-  const registration = await navigator.serviceWorker.ready
-  const token = currentToken || await instance.getToken({ vapidKey, serviceWorkerRegistration: registration })
-  if (token) await backend(endpoint(role) + '?token=' + encodeURIComponent(token), { method: 'DELETE' })
+  try {
+    await detachPushToken()
+  } catch {
+    // 토큰 해제 실패가 로그아웃·알림 끄기를 막지 않게 한다
+    const base = endpoint(role)
+    if (currentToken) await backend(base + '?token=' + encodeURIComponent(currentToken), { method: 'DELETE' }).catch(() => {})
+  }
   currentToken = ''
   lastOwner = ''
   localStorage.removeItem(ownerKey)

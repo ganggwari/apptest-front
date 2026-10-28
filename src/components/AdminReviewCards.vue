@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { apiUrl } from "../services/apiOrigin"
 import { reactive, ref, onBeforeUnmount } from 'vue'
 import DeadlineTimer from './DeadlineTimer.vue'
 defineProps<{ items: Record<string, any>[]; saving: boolean }>()
@@ -12,7 +13,7 @@ const corrections = reactive<Record<string, string>>({})
 function imageUrl(value: string) {
   if (!value || value.includes(':') || value.split(/[\\/]/).some((p) => p === '..' || p === '.'))
     return ''
-  return (
+  return apiUrl(
     '/api/uploads/' +
     value
       .replace(/^\/api\/uploads\//, '')

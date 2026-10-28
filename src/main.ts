@@ -8,6 +8,8 @@ import App from './App.vue'
 import PasswordInput from './components/PasswordInput.vue'
 import UiIcon from './components/UiIcon.vue'
 import AccountName from './components/AccountName.vue'
+import AdminPageIcon from './components/AdminPageIcon.vue'
+import WorkflowPage from './components/WorkflowPage.vue'
 import router from './router'
 import './styles/shared.css'
 import './styles/meeting-layout.css'
@@ -35,10 +37,21 @@ import './styles/admin-interface.css'
 import './styles/overlay-polish.css'
 import './styles/interface-motion.css'
 import './styles/interface-refinements.css'
+import './styles/admin-layout-system.css'
+import './styles/app-frame.css'
+import './styles/interaction-states.css'
+import './styles/app-design-system.css'
+import './styles/manager-spacing.css'
+import './styles/dark-chart-glow.css'
+import './styles/admin-web-workspace.css'
+import './styles/admin-web-sections.css'
+import './styles/customer-mobile-polish.css'
 createApp(App)
   .component('PasswordInput', PasswordInput)
   .component('UiIcon', UiIcon)
   .component('AccountName', AccountName)
+  .component('AdminPageIcon', AdminPageIcon)
+  .component('WorkflowPage', WorkflowPage)
   .use(createPinia())
   .use(router)
   .mount('#app')

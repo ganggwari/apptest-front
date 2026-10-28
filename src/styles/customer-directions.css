@@ -276,9 +276,8 @@
   text-align: left;
   cursor: pointer;
 }
-.navigation-search-toggle>span {
-  font-size: 22px;
-}
+.navigation-search-chevron { width:20px; height:20px; flex-shrink:0; }
+.navigation-search-chevron.is-expanded { transform:rotate(180deg); }
 #navigation-search-fields {
   padding-top: 10px;
 }
@@ -786,6 +785,18 @@ dialog.navigation-weather-dialog {
   font: inherit;
 }
 .navigation-demo-controls small { flex-basis: 100%; }
+#app .navigation-demo-controls :is(select,button) {
+  box-sizing:border-box; min-width:0; min-height:40px; padding:8px 12px;
+  border:1px solid var(--r-line); border-radius:9px;
+  background:var(--r-surface); color:var(--r-ink); font:inherit; font-size:12px; line-height:20px;
+}
+#app .navigation-demo-controls .navigation-demo-actions {
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.6fr); gap:8px; width:100%;
+}
+#app .navigation-demo-actions>button { width:100%; text-align:center; }
+#app .navigation-demo-actions>button:last-child { background:var(--r-selected); color:var(--r-accent); }
+#app .navigation-demo-actions>button:disabled { opacity:.55; cursor:wait; }
+#app .navigation-demo-controls>small { color:var(--r-muted); font-size:11px; line-height:18px; }
 .navigation-summary {
   touch-action: pan-x;
 }
@@ -815,17 +826,5 @@ dialog.navigation-weather-dialog {
   display: none;
 }
 
-/* 시연 프리셋과 위험 우회 결과 */
-.navigation-demo-presets { margin: 12px 0; padding: 12px; border-radius: 12px; background: var(--surface, #fff); border: 1px solid var(--line, #ddd); }
-.navigation-demo-presets > strong { display: block; margin-bottom: 8px; font-size: 13px; }
-.navigation-demo-presets > div { display: flex; gap: 6px; flex-wrap: wrap; }
-.navigation-demo-presets button { padding: 8px 10px; border: 1px solid #8aa5be; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; font-size: 12px; }
-.navigation-demo-presets button:disabled { opacity: .5; cursor: not-allowed; }
-.navigation-hazard-note { padding: 11px 14px; margin: 8px 12px; border-radius: 10px; background: #fff4df; color: #6c3f0b; font-size: 13px; }
-.navigation-hazard-note[data-kind=blocked] { background: #ffe4e4; color: #9f2020; }
-.navigation-hazard-note[data-kind=info] { background: #e6f2ff; color: #174b7c; }
-
-/* 주행 중 지하차도 위험 변경 알림 (12초간 표시) */
-.navigation-reroute-alert { margin: 10px 12px; padding: 14px 12px; display: flex; align-items: center; gap: 10px; background: #b91c1c; color: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(100,0,0,.24); position: relative; z-index: 5; font-size: 14px; }
-.navigation-reroute-alert strong { flex: 1; line-height: 1.5; }
-.navigation-reroute-alert button { border: none; color: inherit; background: transparent; font-size: 24px; cursor: pointer; }
+.navigation-demo-box { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; padding: 8px; border: 1px dashed #9aa3ae; border-radius: 10px; font-size: 12px; }
+.navigation-demo-box button { padding: 6px 9px; font-size: 12px; }

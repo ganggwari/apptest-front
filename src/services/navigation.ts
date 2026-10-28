@@ -8,52 +8,18 @@ export type Route = {
   sections: { roads: { vertexes: number[] }[]; guides?: Guide[] }[]
 }
 export type Point = { lat: number; lng: number }
-// 백엔드 /api/navigation/route (위험 지하차도 우회) 응답
-export type HazardRoute = {
-  distance: number
-  duration: number
-  path: number[][]
-  guides: { lat: number; lng: number; name: string; text: string; type: number; at: number }[]
-  detoured: boolean
-  mandatory: boolean
-  passesHazards: string[]
-  blockedHazards: string[]
-  advisoryHazards: string[]
-  message: string | null
-  suggestedDetour: null | {
-    distance: number
-    duration: number
-    extraSec: number
-    path: number[][]
-    guides: HazardRoute['guides']
-    message: string | null
-  }
+export type SafetyRoute = {
+  distance: number; duration: number; path: [number, number][]
+  guides: { lat: number; lng: number; name: string; text: string; at: number }[]
+  mandatory: boolean; detoured: boolean; message: string
+  passesHazards: string[]; blockedHazards: string[]; advisoryHazards: string[]
+  suggestedDetour?: { distance:number;duration:number;path:[number,number][];guides:SafetyRoute['guides'];message:string;extraSec:number } | null
 }
-export function toRoute(
-  r: { distance: number; duration: number; path: number[][]; guides: HazardRoute['guides'] },
-  label?: string,
-): Route {
-  const vertexes: number[] = []
-  for (const [lat, lng] of r.path) vertexes.push(lng!, lat!)
-  // 우회용 경유지 안내("경유지")는 운전자에게 의미가 없어 뺀다
-  const guides = r.guides.filter((g) => !/경유지/.test(g.text) && !/경유지/.test(g.name))
-  return {
-    label,
-    result_code: 0,
-    summary: { distance: r.distance, duration: r.duration },
-    sections: [
-      {
-        roads: [{ vertexes }],
-        guides: guides.map((g, i) => ({
-          name: g.name || '',
-          x: g.lng,
-          y: g.lat,
-          distance: Math.max(0, (guides[i + 1]?.at ?? r.distance) - g.at),
-          guidance: g.text,
-        })),
-      },
-    ],
-  }
+export function safetyRouteCandidate(route: Pick<SafetyRoute,'distance'|'duration'|'path'|'guides'>): Route {
+  return { result_code:0, summary:{distance:route.distance,duration:route.duration}, sections:[{
+    roads:[{vertexes:route.path.flatMap(([lat,lng])=>[lng,lat])}],
+    guides:(route.guides||[]).map(guide=>({name:guide.name,x:guide.lng,y:guide.lat,distance:guide.at,guidance:guide.text})),
+  }] }
 }
 export async function navigationRequest<T>(
   path: string,

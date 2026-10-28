@@ -1,3 +1,4 @@
+import { adminResourceTitles } from './adminTitles'
 import { noticeCategories, faqCategories } from '../services/backendCatalog'
 export type Field = {
   key: string
@@ -15,6 +16,7 @@ export type Field = {
   required?: boolean
   options?: [string, string][]
   source?: 'regions' | 'underpasses' | 'shifts' | 'cameras' | 'presets' | 'reasons' | 'vms'
+  wide?: boolean // 등록·수정 창에서 한 줄 전체 폭을 쓴다
 }
 export type Action = {
   label: string
@@ -103,7 +105,7 @@ const facilityFields: Field[] = [
     ['C', 'C'],
     ['D', 'D'],
     ['E', 'E'],
-    ['UNKNOWN', '미실시·불명'],
+    ['UNKNOWN', '미확인'],
   ]),
   num('riverDistM', '하천 거리(m)'),
   num('seaDistM', '바다 거리(m)'),
@@ -123,7 +125,7 @@ const cameraFields: Field[] = [
 ]
 export const backendResources: Record<string, Resource> = {
   facilities: {
-    title: '지하차도 관리',
+    title: adminResourceTitles.facilities!,
     path: '/api/underpasses',
     public: true,
     columns: [
@@ -155,21 +157,21 @@ export const backendResources: Record<string, Resource> = {
     remove: true,
     actions: [
       {
-        label: '통제 및 경찰 이관',
+        label: '통제·경찰/소방 이관',
         path: '/api/control/underpasses/{id}/block',
         method: 'POST',
         fields: [source('presetId', '통제 사유 선택', 'reasons'), area('reason', '통제 사유')],
         pdf: true,
       },
       {
-        label: '통제 해제 및 경찰 이관',
+        label: '해제·경찰/소방 이관',
         path: '/api/control/underpasses/{id}/release',
         method: 'POST',
         fields: [source('presetId', '해제 사유 선택', 'reasons'), area('reason', '해제 사유')],
         pdf: true,
       },
       {
-        label: '소방 이관',
+        label: '잔류차량 소방 이관',
         path: '/api/control/underpasses/{id}/fire-transfer',
         method: 'POST',
         fields: [
@@ -182,7 +184,7 @@ export const backendResources: Record<string, Resource> = {
     ],
   },
   cameras: {
-    title: '카메라 관리',
+    title: adminResourceTitles.cameras!,
     path: '/api/underpasses/{underpassId}/cameras',
     parents: [{ ...facility, required: true }],
     columns: [
@@ -198,7 +200,7 @@ export const backendResources: Record<string, Resource> = {
     detail: true,
   },
   thresholds: {
-    title: '위험도 임계치 설정',
+    title: adminResourceTitles.thresholds!,
     path: '/api/underpasses/{underpassId}/thresholds',
     parents: [{ ...facility, required: true }],
     columns: [
@@ -211,11 +213,12 @@ export const backendResources: Record<string, Resource> = {
     rowKey: 'level',
   },
   transits: {
-    title: '차량 통과·잔류 기록',
+    title: adminResourceTitles.transits!,
     path: '/api/underpasses/transits',
     columns: [
       ['underpassName', '지하차도'],
-      ['carNum', '차량 번호'],
+      // 정정한 번호가 있으면 그 값 (서버가 없으면 원본 carNum 을 채워 준다)
+      ['displayCarNum', '차량 번호'],
       ['status', '상태'],
       ['entryAt', '진입 시각'],
       ['exitAt', '통과 시각'],
@@ -236,7 +239,7 @@ export const backendResources: Record<string, Resource> = {
     ],
   },
   events: {
-    title: '시설 제어 이력',
+    title: adminResourceTitles.events!,
     path: '/api/underpasses/{underpassId}/events',
     parents: [{ ...facility, required: true }],
     columns: [
@@ -247,13 +250,20 @@ export const backendResources: Record<string, Resource> = {
       ['displayContent', '전광판 문구'],
       ['createdAt', '발생 시각'],
     ],
-    filters: [text('kind', '이력 종류'), ...period],
+    filters: [
+      select('kind', '이력 종류', [
+        ['EVENT', '차단·해제·위험도'],
+        ['DISPLAY', '전광판 문구'],
+      ]),
+      ...period,
+    ],
   },
   ocr: {
-    title: 'OCR 인식 기록',
+    title: adminResourceTitles.ocr!,
     path: '/api/plate-logs',
     columns: [
       ['underpassName', '시설'],
+      ['cameraId', '카메라 번호'],
       ['detectedNum', '인식 번호'],
       ['imagePath', '인식 이미지'],
       ['correctedNum', '정정 번호'],
@@ -285,7 +295,7 @@ export const backendResources: Record<string, Resource> = {
     detailFromRow: true,
   },
   reviews: {
-    title: '번호판 판별',
+    title: adminResourceTitles.reviews!,
     path: '/api/plate-logs',
     columns: [
       ['underpassName', '시설'],
@@ -326,11 +336,12 @@ export const backendResources: Record<string, Resource> = {
     ],
   },
   transfers: {
-    title: '경찰·소방 이관 문서',
+    title: adminResourceTitles.transfers!,
     path: '/api/control/underpasses/{underpassId}/transfers',
     parents: [{ ...facility, required: true }],
     columns: [
       ['agency', '이관 기관'],
+      ['documentType', '문서 종류'],
       ['managerName', '처리자'],
       ['carNums', '차량 번호'],
       ['memo', '전달 내용'],
@@ -343,7 +354,7 @@ export const backendResources: Record<string, Resource> = {
   // 전광판(its_vms) 한 대의 수동 페이지. 자동 표출 페이지(차단·위험 문구)는 서버가 만들고 수정·삭제를 막는다.
   // 새 페이지는 원인 지하차도(underpassId)가 필수 (수정할 때는 서버가 무시)
   display: {
-    title: '전광판 페이지 관리',
+    title: adminResourceTitles.display!,
     path: '/api/display/vms/{vmsId}/pages',
     parents: [source('vmsId', '전광판', 'vms', true)],
     columns: [
@@ -396,7 +407,7 @@ export const backendResources: Record<string, Resource> = {
     ],
   },
   regions: {
-    title: '지역 관리',
+    title: adminResourceTitles.regions!,
     path: '/api/regions',
     public: true,
     columns: [
@@ -409,7 +420,7 @@ export const backendResources: Record<string, Resource> = {
     remove: true,
   },
   managers: {
-    title: '관리자·담당 지역·근무조',
+    title: adminResourceTitles.managers!,
     path: '/api/managers',
     columns: [
       ['name', '이름'],
@@ -465,7 +476,7 @@ export const backendResources: Record<string, Resource> = {
     ],
   },
   customers: {
-    title: '고객 관리',
+    title: adminResourceTitles.customers!,
     path: '/api/customers',
     columns: [
       ['name', '이름'],
@@ -483,7 +494,7 @@ export const backendResources: Record<string, Resource> = {
     fields: profileFields,
   },
   alerts: {
-    title: '알림 발송 기록',
+    title: adminResourceTitles.alerts!,
     path: '/api/alert-logs',
     columns: [
       ['underpassId', '시설 번호'],
@@ -504,7 +515,7 @@ export const backendResources: Record<string, Resource> = {
     ],
   },
   notices: {
-    title: '공지사항 관리',
+    title: adminResourceTitles.notices!,
     path: '/api/notices',
     public: true,
     columns: [
@@ -516,10 +527,11 @@ export const backendResources: Record<string, Resource> = {
       ['viewCount', '조회수'],
     ],
     filters: [text('keyword', '제목·내용'), select('category', '분류', noticeCategories)],
+    // 제목·내용·분류는 한 줄 전체, 체크 두 개(중요 공지·고객 알림 발송)는 마지막 줄에 나란히
     fields: [
-      text('title', '제목', true),
+      { ...text('title', '제목', true), wide: true },
       area('content', '내용', true),
-      select('category', '분류', noticeCategories),
+      { ...select('category', '분류', noticeCategories), wide: true },
       { key: 'important', label: '중요 공지', type: 'checkbox' },
       { key: 'sendPush', label: '고객 알림 발송', type: 'checkbox' },
     ],
@@ -529,7 +541,7 @@ export const backendResources: Record<string, Resource> = {
     remove: true,
   },
   faqs: {
-    title: 'FAQ 관리',
+    title: adminResourceTitles.faqs!,
     path: '/api/faqs',
     public: true,
     columns: [
@@ -551,7 +563,7 @@ export const backendResources: Record<string, Resource> = {
     remove: true,
   },
   inquiries: {
-    title: '고객 문의 처리',
+    title: adminResourceTitles.inquiries!,
     path: '/api/inquiries',
     columns: [
       ['title', '제목'],
@@ -642,6 +654,7 @@ export const resourceRoutes: Record<string, string> = {
   '/my-alerts': 'my-alerts',
 }
 export const valueLabels: Record<string, string> = {
+  UNKNOWN: '미확인',
   RISK_LEVEL_UP: '위험도 상승',
   RISK_LEVEL_DOWN: '위험도 하락',
   NORMAL: '정상',
@@ -670,6 +683,8 @@ export const valueLabels: Record<string, string> = {
   REGIONAL_ADMIN: '지역 관리자',
   POLICE: '경찰',
   FIRE: '소방',
+  CONTROL_NOTICE: '통제·해제 안내',
+  REMAINING_VEHICLES: '잔류차량 전달서',
   ANSWERED: '답변 완료',
 }
 valueLabels.NORMAL = '정상'
@@ -755,4 +770,9 @@ backendResources['manager-notifications'] = {
   ],
 }
 resourceRoutes['/admin-app/notifications'] = 'manager-notifications'
+resourceRoutes['/admin-app/transfers'] = 'transfers'
+resourceRoutes['/admin-app/notices'] = 'notices'
+resourceRoutes['/admin-app/inquiries'] = 'inquiries'
 Object.assign(valueLabels, { RISK: '위험', EQUIPMENT: '설비', TASK: '업무', SYSTEM: '시스템' })
+// 시설 제어 이력의 유형(kind) 값: 영문 그대로 나오지 않게
+Object.assign(valueLabels, { EVENT: '시설 제어', DISPLAY: '전광판' })

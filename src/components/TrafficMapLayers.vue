@@ -3,12 +3,48 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { getBusanCameras } from '../services/busanCctv'
 import TrafficVideo from './TrafficVideo.vue'
 import VmsLedDisplay from './VmsLedDisplay.vue'
-type Point = { id: string; name: string; address: string; lat: number; lng: number; kind: 'cctv' | 'vms'; type?: string; url?: string; content?: string; messages?: string[]; example?: boolean; updatedAt?: string }
-const props = defineProps<{ map: any; maps: any; toggleControls?: boolean }>()
+import { backend } from '../services/backend'
+type Point = { id: string; name: string; address: string; lat: number; lng: number; kind: 'cctv' | 'vms'; type?: string; url?: string; content?: string; messages?: string[]; pages?:{content:string;color?:string}[]; example?: boolean; updatedAt?: string }
+const props = defineProps<{ map: any; maps: any; toggleControls?: boolean; app?: boolean }>()
 const showCctv = ref(false), showVms = ref(false), loading = ref(false), error = ref('')
 const controlsExpanded = ref(true)
 const points = ref<Point[]>([]), active = ref<Point>(), dialog = ref<HTMLDialogElement>()
 const groupItems = ref<Point[]>([])
+type VmsData = { id:number|string; name:string; spec?:string; lat:number; lng:number; pages?:{pageNo:number;content?:string;color?:string;lines?:string[];updatedAt?:string|null}[] }
+function vmsPoint(row: VmsData): Point {
+  const pages = [...(row.pages || [])].sort((a,b)=>a.pageNo-b.pageNo)
+  const displayPages=pages.map(page=>({content:page.content || page.lines?.join('\n') || '',color:page.color})).filter(page=>page.content.trim())
+  return { id:String(row.id), name:row.name, type:row.spec, address:'', lat:Number(row.lat), lng:Number(row.lng), kind:'vms',
+    messages:displayPages.map(page=>page.content), pages:displayPages,
+    updatedAt:pages.map(page=>page.updatedAt || '').sort().at(-1), example:false }
+}
+const vmsLoading = ref(false), vmsError = ref('')
+let vmsController: AbortController | undefined
+async function refreshVms() {
+  const point = active.value
+  if (point?.kind !== 'vms') return
+  vmsController?.abort()
+  const controller = new AbortController(); vmsController = controller
+  vmsLoading.value = true; vmsError.value = ''
+  try {
+    const row = await backend<VmsData>('/api/its-vms/'+encodeURIComponent(point.id), {signal:controller.signal})
+    if (!controller.signal.aborted && active.value?.kind==='vms' && active.value.id===point.id) {
+      const updated = vmsPoint(row)
+      if (JSON.stringify(updated.messages)===JSON.stringify(active.value.messages)) updated.messages=active.value.messages
+      if (JSON.stringify(updated.pages)===JSON.stringify(active.value.pages)) updated.pages=active.value.pages
+      active.value = updated
+    }
+  } catch (e) {
+    if (!controller.signal.aborted) vmsError.value = (e as Error).message
+  } finally { if (!controller.signal.aborted) vmsLoading.value = false }
+}
+watch(()=>active.value?.kind==='vms'?active.value.id:undefined, (id,_,cleanup)=>{
+  vmsController?.abort(); vmsError.value=''; vmsLoading.value=false
+  if (!id) return
+  void refreshVms()
+  const timer = setInterval(()=>void refreshVms(),15000)
+  cleanup(()=>{ clearInterval(timer); vmsController?.abort() })
+})
 function closeInfo() { active.value = undefined; groupItems.value = [] }
 let backdropPress = false
 function outsideDialog(event: PointerEvent | MouseEvent) {
@@ -76,11 +112,9 @@ async function load() {
   loading.value = true
   const results = await Promise.allSettled([
     showCctv.value ? getBusanCameras() : Promise.resolve([]),
-    showVms.value ? fetch('/map-vms.json', { cache: 'no-store' }).then(async response => {
-      if (!response.ok) throw Error('VMS 목록을 불러오지 못했습니다.')
-      const rows = await response.json()
+    showVms.value ? backend<VmsData[]>('/api/its-vms').then(rows => {
       if (!Array.isArray(rows)) throw Error('VMS 목록 형식이 올바르지 않습니다.')
-      return rows
+      return rows.map(vmsPoint)
     }) : Promise.resolve([]),
   ])
   if (disposed || ticket !== generation) return
@@ -117,7 +151,7 @@ onBeforeUnmount(() => { disposed = true; generation++; clear(); if (props.map &&
 <template>
   <div class="traffic-map-layers" :class="{'traffic-map-toggles':toggleControls,'traffic-controls-collapsed':toggleControls&&!controlsExpanded}" aria-label="교통 시설 표시">
     <button v-if="toggleControls" type="button" class="traffic-controls-heading" :aria-expanded="controlsExpanded" @click="controlsExpanded=!controlsExpanded">
-      <span>교통 시설</span><span aria-hidden="true">{{controlsExpanded?'‹':'›'}}</span>
+      <span>교통 시설</span><span v-if="!controlsExpanded" aria-hidden="true">›</span>
     </button>
     <div v-show="!toggleControls||controlsExpanded" class="traffic-controls-body">
     <div class="traffic-layer-switches">
@@ -127,9 +161,11 @@ onBeforeUnmount(() => { disposed = true; generation++; clear(); if (props.map &&
     <p v-if="loading" role="status">교통 시설을 불러오는 중…</p>
     <p v-if="error" role="status">{{error}} <button type="button" @click="load">다시 조회</button></p>
     </div>
+    <!-- 펼쳤을 때는 접기 화살표를 맨 뒤(VMS 전광판 다음)에 둔다 -->
+    <button v-if="toggleControls&&controlsExpanded" type="button" class="traffic-controls-heading traffic-controls-collapse" aria-label="교통 시설 접기" @click="controlsExpanded=false"><span aria-hidden="true">‹</span></button>
   </div>
   <Teleport to="body">
-  <dialog ref="dialog" class="traffic-device-dialog" aria-label="교통 시설 정보" @cancel.prevent="closeInfo" @close="closeInfo" @pointerdown.stop="backdropPress=outsideDialog($event)" @pointercancel="backdropPress=false" @click.stop="backdropClick">
+  <WorkflowPage ref="dialog" :page-mode="app" class="traffic-device-dialog" :class="{'traffic-device-app-dialog':app}" aria-label="교통 시설 정보" @cancel.prevent="closeInfo" @close="closeInfo" @pointerdown.stop="backdropPress=outsideDialog($event)" @pointercancel="backdropPress=false" @click.stop="backdropClick">
     <template v-if="!active && groupItems.length">
       <header><span class="traffic-device-type">이 위치의 CCTV·전광판 {{groupItems.length}}개</span><button type="button" aria-label="닫기" @click="closeInfo">✕</button></header>
       <h2>확인할 시설을 선택하세요</h2>
@@ -143,10 +179,10 @@ onBeforeUnmount(() => { disposed = true; generation++; clear(); if (props.map &&
       <header><button v-if="groupItems.length" type="button" @click="active=undefined" aria-label="목록으로 돌아가기">←</button><span class="traffic-device-type">{{active.kind==='cctv'?'도로 CCTV':'VMS 전광판'}}</span><button type="button" aria-label="닫기" @click="closeInfo">✕</button></header>
       <h2>{{active.name}}</h2><p v-if="active.address">{{active.address}}</p>
       <TrafficVideo v-if="active.kind==='cctv' && active.url" :key="active.id" :src="active.url" hls />
-      <template v-else-if="active.kind==='vms'"><p v-if="active.type">전광판 규격: {{active.type}}</p><p>위치: {{active.lat}}, {{active.lng}}</p><p v-if="active.example" class="vms-example-note">예시 문구 · 실제 전광판 표출 내용과 다를 수 있습니다.</p><VmsLedDisplay v-if="active.content || active.messages?.length" :key="active.id" :content="active.content" :messages="active.messages" :example="active.example" /><p v-else>현재 표출 문구는 제공되지 않습니다.</p><p v-if="active.updatedAt">갱신 시각: {{active.updatedAt}}</p></template>
+      <template v-else-if="active.kind==='vms'"><p v-if="vmsError" role="alert">{{vmsError}}</p><p v-if="vmsLoading&&!active.messages?.length" role="status">전광판 문구를 불러오는 중입니다.</p><VmsLedDisplay v-if="active.messages?.length" :key="active.id" :pages="active.pages" /><p v-else-if="!vmsLoading&&!vmsError">현재 표출 중인 문구가 없습니다.</p><p v-if="active.updatedAt">갱신 시각: {{active.updatedAt}}</p></template>
       <small v-if="active.kind==='cctv'">부산광역시 교통정보 제공 · 제공처 사정에 따라 영상이 지연되거나 중단될 수 있습니다.</small>
     </template>
-  </dialog>
+  </WorkflowPage>
   </Teleport>
 </template>
 <style src="../styles/components/traffic-map-layers.css"></style>

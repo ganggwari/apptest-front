@@ -93,6 +93,79 @@
   background: var(--accent-soft,#edf3f9);
 }
 /* SDK-created cluster elements need an unscoped rule. Only the ring moves. */
+/* Remove only the SDK frame around ROUTEL content; map tiles and other overlays are untouched. */
+.customer-map-canvas div:has(> div > :is(.routel-map-popup,.routel-cluster-popup)) {
+  background: transparent !important;
+  border: 0 !important;
+}
+.customer-map-canvas div:has(> div > :is(.routel-map-popup,.routel-cluster-popup)) > div:not(:has(> :is(.routel-map-popup,.routel-cluster-popup))) {
+  display: none !important;
+}
+#app :is(.routel-map-popup,.routel-cluster-popup) {
+  box-sizing: border-box;
+  width: 280px;
+  min-width: 0;
+  max-width: calc(100vw - 48px);
+  padding: 0;
+  border: 1px solid var(--r-line,var(--line));
+  border-radius: 16px;
+  background: var(--r-surface,var(--surface));
+  color: var(--r-ink,#19344e);
+  box-shadow: 0 12px 36px #102c4930,0 2px 8px #102c4912;
+  font-family: var(--r-font,inherit);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: normal;
+  animation: routel-popup-enter .2s ease-out;
+}
+#app :is(.routel-map-popup__header,.routel-cluster-popup>header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--r-line,var(--line));
+  background: var(--r-soft,var(--surface));
+  border-radius: 15px 15px 0 0;
+}
+#app .routel-map-popup__title { min-width: 0; margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+#app a.routel-map-popup__title { color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+#app a.routel-map-popup__title:focus-visible { outline: 2px solid var(--r-accent,#225f9b); outline-offset: 3px; border-radius: 3px; }
+#app :is(.routel-map-popup__close,.routel-cluster-popup>header>button) {
+  display: grid; place-items: center;
+  flex: 0 0 28px; width: 28px; min-width: 28px; height: 28px; min-height: 28px;
+  padding: 0; border: 1px solid var(--r-line,var(--line)); border-radius: 8px;
+  background: var(--r-surface,var(--surface)); color: var(--r-muted,#64748b);
+  font: inherit; font-size: 20px; line-height: 1; cursor: pointer;
+}
+#app .routel-map-popup__row { justify-content: space-between; gap: 12px; padding: 0 16px; margin: 14px 0; }
+#app .routel-map-popup__label { font-size: 12px; color: var(--r-muted,#64748b); }
+#app .routel-map-popup__time { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+#app :is(.routel-map-popup__status,.routel-cluster-popup__item>small) {
+  padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;
+  color: var(--r-muted,#64748b); background: var(--r-soft,#edf2f7);
+}
+#app :is(.routel-map-popup__status,.routel-cluster-popup__item>small)[data-state=안전] { color: #267766; background: #e9f6f0; }
+#app :is(.routel-map-popup__status,.routel-cluster-popup__item>small)[data-state=주의] { color: #926017; background: #fff4de; }
+#app :is(.routel-map-popup__status,.routel-cluster-popup__item>small):is([data-state=위험],[data-state=통제]) { color: #b84455; background: #fff0f2; }
+#app .routel-cluster-popup>ul { padding: 6px 8px 8px; max-height: 242px; scrollbar-width: thin; scrollbar-color: var(--r-line,#c9d5e1) transparent; }
+#app .admin-app-map .admin-map-floating-popup { position:absolute; z-index:18; display:flex; flex-direction:column; overflow:hidden; max-width:none; margin:0; animation:none; }
+#app .admin-app-map .admin-map-floating-popup>header { flex-shrink:0; }
+#app .admin-app-map .admin-map-floating-popup>ul { flex:1 1 auto; min-height:0; overflow:auto; overscroll-behavior:contain; }
+#app .admin-app-map.admin-map-popup-active :is(.admin-map-control-dock,.map-only-selection) { display:none; }
+#app .admin-app-map.admin-map-popup-compact .map-overlay-toolbar { display:none; }
+#app .routel-cluster-popup__item { min-height: 46px; padding: 10px 8px; gap: 9px; border: 0; border-radius: 8px; background: transparent; }
+#app .routel-cluster-popup__item:hover { background: var(--r-selected,#edf4ff); }
+#app .routel-cluster-popup__item:focus-visible,
+#app :is(.routel-map-popup__close,.routel-cluster-popup>header>button):focus-visible { outline: 2px solid var(--r-accent,#2866bb); outline-offset: -2px; }
+#app .routel-map-popup__error { margin: 12px 16px; font-size: 12px; }
+:root[data-theme=dark] #app :is(.routel-map-popup__status,.routel-cluster-popup__item>small)[data-state=안전] { color: #91dfbf; background: #23453e; }
+:root[data-theme=dark] #app :is(.routel-map-popup__status,.routel-cluster-popup__item>small)[data-state=주의] { color: #f2ce89; background: #493d28; }
+:root[data-theme=dark] #app :is(.routel-map-popup__status,.routel-cluster-popup__item>small):is([data-state=위험],[data-state=통제]) { color: #ffb4c0; background: #4c2e3c; }
+@keyframes routel-popup-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  #app :is(.routel-map-popup,.routel-cluster-popup) { animation: none; }
+}
 .routel-marker-ripple {
   position: relative;
 }
@@ -125,3 +198,17 @@
     opacity: 0;
   }
 }
+
+.manager-live-map .manager-map-search { position:relative; }
+.manager-live-map .manager-map-search-results { position:absolute; z-index:60; left:0; right:0; top:100%; margin:6px 0 0; padding:4px; max-height:240px; overflow:auto; list-style:none; border:1px solid var(--r-line,#dce7f2); border-radius:10px; background:var(--r-surface,#fff); box-shadow:0 8px 24px #172e4920; }
+.manager-live-map .manager-map-search-results li { margin:0; padding:0; }
+.manager-live-map .manager-map-search-results button { display:flex; flex-direction:column; align-items:flex-start; gap:3px; width:100%; min-height:44px; padding:8px 10px; border:0; border-radius:6px; background:transparent; color:var(--r-ink,#172e49); text-align:left; cursor:pointer; }
+.manager-live-map .manager-map-search-results button:is(:hover,.is-highlighted,:focus-visible) { background:var(--r-selected,#e8f0ff); }
+.manager-live-map .manager-map-search-results strong { font-size:13px; font-weight:600; }
+.manager-live-map .manager-map-search-results small { font-size:11px; color:var(--r-muted,#64748b); }
+.manager-live-map .manager-map-search-empty { padding:12px!important; font-size:12px; color:var(--r-muted,#64748b); }
+
+.manager-live-map .manager-map-search-results button { flex-direction:row; align-items:center; justify-content:space-between; gap:12px; }
+.manager-live-map .manager-search-facility-copy { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.manager-live-map .manager-map-search-results .risk-level-badge,.manager-live-map .manager-search-blocked { flex:none; font-size:11px; line-height:18px; padding:3px 8px; border-radius:5px; }
+.manager-live-map .manager-search-blocked { background:var(--admin-alert-surface,#fff0f2); color:var(--admin-alert-ink,#b84455); }

@@ -1,0 +1,74 @@
+﻿/* 앱 프레임의 크기는 내용 길이와 무관하다. 스크롤은 본문 안에서만 한다. */
+:root:has(#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial)) { overflow:hidden; scrollbar-gutter:auto; }
+:root:has(#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial)) body { margin:0; overflow:hidden; }
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) {
+  display:flex; flex-direction:column; box-sizing:border-box;
+  width:min(430px,100%); min-width:0; max-width:430px;
+  height:100dvh; min-height:0; max-height:100dvh;
+  margin:0 auto; overflow:hidden;
+}
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) > :is(.service-app-layout,.mobile-page) {
+  flex:1 1 0; width:100%; min-width:0; max-width:100%; height:auto; min-height:0; margin:0; box-sizing:border-box; overflow:hidden;
+}
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) .mobile-page>.ph {
+  display:flex; flex-direction:column; width:100%; height:100%; min-height:0; max-height:100%; box-sizing:border-box;
+}
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) :is(.app-restored-body,:where(.mobile-page>.ph>.bd)) {
+  flex:1 1 0; min-width:0; min-height:0; box-sizing:border-box;
+  overflow-x:hidden; overflow-y:scroll; overflow-anchor:none;
+  scrollbar-width:thin; scrollbar-gutter:stable both-edges;
+}
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) :is(.app-restored-body,:where(.mobile-page>.ph>.bd))::-webkit-scrollbar { width:6px; }
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) :is(.app-restored-body,:where(.mobile-page>.ph>.bd))::-webkit-scrollbar-thumb { background:#91a3b6; border-radius:6px; }
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) :is(.app-restored-body,:where(.mobile-page>.ph>.bd))::-webkit-scrollbar-track { background:transparent; }
+/* 지도는 본문 스크롤을 사용하지 않고 확보된 영역 전체를 채운다. */
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) :is(.app-manager-overview,.app-map-screen)>.app-restored-body {
+  overflow:hidden; scrollbar-gutter:auto;
+}
+#app :is(.service-mobile,.manager-app-shell,.customer-app-editorial) :is(.app-service-content,.service-workspace) { min-width:0; max-width:100%; box-sizing:border-box; }
+.service-app-layout .service-heading.app-resource-heading:not(:has(button,a)) { display:none; }
+
+#app .service-app-layout.app-auth:has(.login-form)>.app-restored-body {
+  display:flex;
+  flex-direction:column;
+  padding:clamp(24px,6vh,56px) 20px 24px;
+  overflow-y:auto;
+  scrollbar-gutter:auto;
+}
+#app .service-app-layout.app-auth:has(.login-form)>.app-restored-body>:first-child {
+  flex:0 0 auto;
+  width:100%;
+  min-height:0;
+  margin-block:0;
+}
+#app .service-app-layout.app-auth .auth-service:has(.login-form) {
+  width:100%;
+  max-width:380px;
+  margin:0 auto;
+  padding:24px;
+  border:1px solid var(--r-line,var(--line));
+  border-radius:12px;
+  background:var(--r-surface,var(--surface));
+}
+#app .service-app-layout.app-auth .login-form .auth-buttons button[type=submit] { width:100%; }
+#app .service-app-layout.app-auth .auth-service:has(.login-form) .auth-links { justify-content:center; flex-wrap:wrap; gap:12px; }
+
+/* Existing underpass photography fades in below the sign-in card. */
+#app .service-app-layout.app-manager.app-auth:has(.login-form)>.app-restored-body {
+  position:relative; isolation:isolate;
+  background:
+    linear-gradient(to bottom,#f1f6fc 0%,#f1f6fcfa 20%,#f1f6fce8 40%,#f1f6fcbf 57%,#f1f6fc88 74%,#f1f6fc9c 90%,#f1f6fccc 100%),
+    linear-gradient(to right,#f1f6fc45,transparent 25%,transparent 75%,#f1f6fc45),
+    url('/brand/routel-coastal-underpass.png') center bottom / auto 100% no-repeat,
+    #f1f6fc;
+}
+#app .service-app-layout.app-manager.app-auth .auth-service:has(.login-form) {
+  box-shadow:0 12px 36px #214d7d0d;
+}
+:root[data-theme=dark] #app .service-app-layout.app-manager.app-auth:has(.login-form)>.app-restored-body {
+  background:
+    linear-gradient(to bottom,#101e2e 0%,#101e2efa 20%,#101e2ee8 40%,#101e2ed4 57%,#101e2eb0 74%,#101e2ebf 90%,#101e2ee0 100%),
+    linear-gradient(to right,#101e2e55,transparent 25%,transparent 75%,#101e2e55),
+    url('/brand/routel-coastal-underpass.png') center bottom / auto 100% no-repeat,
+    #101e2e;
+}

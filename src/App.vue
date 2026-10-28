@@ -16,22 +16,23 @@ import AdminAppOverview from './pages/admin-app-overview.vue'
 import ServiceAuth from './pages/service-auth.vue'
 import ServiceNotifications from './pages/service-notifications.vue'
 import ServiceAccount from './pages/service-account.vue'
-import ServiceDashboard from './pages/service-dashboard.vue'
-import AdminFacilityRestored from './pages/admin-facility-restored.vue'
 import PmEquipmentLive from './pages/pm-equipment-live.vue'
 import PmEquipmentDetailLive from './pages/pm-equipment-detail-live.vue'
 import PmQueueLive from './pages/pm-queue-live.vue'
 import PmHistoryLive from './pages/pm-history-live.vue'
+import PmInspection from './pages/pm-inspection.vue'
+import PmSettings from './pages/pm-settings-live.vue'
+import PmDaily from './pages/pm-daily-live.vue'
 import ServiceResource from './pages/backend-resource.vue'
 import LiveMap from './pages/c-live-map.vue'
 import { resourceRoutes } from './data/backendResources'
 import AdminHandover from './components/AdminHandover.vue'
-import CustomerHeader from './components/CustomerHeader.vue'
+import ManagerUrgentAlert from './components/ManagerUrgentAlert.vue'
+import DevicePushBridge from './components/DevicePushBridge.vue'
+import PushConsentPrompt from './components/PushConsentPrompt.vue'
 import CustomerArrivalAlert from './components/CustomerArrivalAlert.vue'
-import CustomerFooter from './components/CustomerFooter.vue'
-import MyPageLayout from './components/MyPageLayout.vue'
-import CustomerPageLayout from './components/CustomerPageLayout.vue'
 import PublicChatbot from './components/PublicChatbot.vue'
+import CustomerRuGuide from './components/CustomerRuGuide.vue'
 import { mobileInteractions } from './runtime/mobileInteractions'
 import { useApp } from './stores/app'
 import { enableFcm, resetFcmOwner } from './services/fcmPush'
@@ -72,12 +73,6 @@ watch(
 )
 const route = useRoute(),
   router = useRouter()
-const customer = computed(
-  () =>
-    !route.path.startsWith('/customer-app/') &&
-    (route.path === '/' ||
-      /^\/(?:c-|info\/|my-|login|signup|password-reset|find-id)/.test(route.path)),
-)
 watch(
   () => route.path,
   (path) => {
@@ -86,22 +81,15 @@ watch(
     const manifest = document.querySelector<HTMLLinkElement>('#app-manifest'),
       icon = document.querySelector<HTMLLinkElement>('#app-touch-icon')
     if (manifest) manifest.href = `/${kind}.webmanifest`
-    if (icon) icon.href = `/icons/${kind}-180.png`
+    if (icon) icon.href = `/icons/${kind}-ru-180-v1.png`
   },
   { immediate: true },
 )
 const serviceComponent = computed(() => {
   const path = route.path
-  if (['/my-alerts', '/customer-app/screen-12'].includes(path)) return ServiceNotifications
+  if (path === '/customer-app/screen-12') return ServiceNotifications
   if (
     [
-      '/c-auth',
-      '/admin-login',
-      '/admin-signup',
-      '/admin-password-reset',
-      '/login',
-      '/signup',
-      '/password-reset',
       '/admin-app/screen-1',
       '/customer-app/screen-1',
       '/customer-app/screen-2',
@@ -113,27 +101,27 @@ const serviceComponent = computed(() => {
     ].includes(path)
   )
     return ServiceAuth
-  if (['/c-notice', '/info/faq', '/customer-app/notices', '/customer-app/faq'].includes(path))
+  if (['/customer-app/notices', '/customer-app/faq'].includes(path))
     return ServiceResource
-  if (['/c-map', '/customer-app/screen-5', '/customer-app/screen-6'].includes(path)) return LiveMap
-  if (path === '/fac-detail') return AdminFacilityRestored
-  if (path === '/pm-equipment') return PmEquipmentLive
-  if (path === '/pm-equipment-detail') return PmEquipmentDetailLive
-  if (path === '/pm-queue') return PmQueueLive
-  if (path === '/pm-history') return PmHistoryLive
-  if (path === '/admin-app/screen-5') return AdminAppFacilityLive
+  if (['/customer-app/screen-5', '/customer-app/screen-6'].includes(path)) return LiveMap
+  if (path === '/admin-app/screen-9') return PmEquipmentLive
+  if (path === '/admin-app/screen-10') return PmEquipmentDetailLive
+  if (path === '/admin-app/screen-11') return PmQueueLive
+  if (path === '/admin-app/history') return PmHistoryLive
+  if (path === '/admin-app/inspection') return PmInspection
+  if (path === '/admin-app/pm-settings') return PmSettings
+  if (path === '/admin-app/pm-daily') return PmDaily
+  // screen-6(통제)·7(통제 중)·8(해제)은 시설 0번 고정 목업이었다. 실제 통제·해제 API를 쓰는 시설 화면으로 보낸다
+  if (['/admin-app/screen-5', '/admin-app/screen-6', '/admin-app/screen-7', '/admin-app/screen-8'].includes(path))
+    return AdminAppFacilityLive
   if (path === '/admin-app/screen-3') return AdminAppOverview
-  if (path === '/admin-dashboard') return ServiceDashboard
   if (
-    ['/admin-profile', '/admin-app/screen-14', '/my-home', '/my-account', '/my-withdraw'].includes(
-      path,
-    ) ||
+    path === '/admin-app/screen-14' ||
     /^\/customer-app\/account\/(profile|emergency|cars|settings|withdraw)$/.test(path)
   )
     return ServiceAccount
   if (
     resourceRoutes[path] ||
-    path.startsWith('/admin-data/') ||
     /^\/admin-app\/(ocr|reviews|transits)$/.test(path)
   )
     return ServiceResource
@@ -164,32 +152,17 @@ function unmounted(vnode: VNode) {
 </script>
 <template>
   <div
-    :class="{'admin-interface':!customer&&!route.path.startsWith('/customer-app/'),'manager-app-shell':managerApp,'customer-shell':customer,'customer-editorial':customer&&!['/c-map','/c-live-map'].includes(route.path),'customer-app-editorial':route.path.startsWith('/customer-app/')&&!['/customer-app/screen-5','/customer-app/screen-6'].includes(route.path),'service-mobile':appService,'admin-shell':!customer&&!route.path.startsWith('/admin-app/')&&!route.path.startsWith('/customer-app/')}"
+    :class="{'admin-interface':!route.path.startsWith('/customer-app/'),'manager-app-shell':managerApp,'customer-app-editorial':route.path.startsWith('/customer-app/')&&!['/customer-app/screen-5','/customer-app/screen-6'].includes(route.path),'service-mobile':appService}"
   >
     <AdminAppHeader v-if="managerApp&&route.path!=='/admin-app/menu'" />
     <PwaStatus :hide-install="managerApp" v-if="/^\/(admin|customer)-app\//.test(route.path)" />
     <AdminHandover v-if="app.account?.role==='REGIONAL_ADMIN'" />
-    <CustomerHeader v-if="customer" />
+    <ManagerUrgentAlert v-if="app.account?.role==='REGIONAL_ADMIN'" />
     <CustomerArrivalAlert />
+    <DevicePushBridge />
+    <PushConsentPrompt />
     <RouterView v-slot="{Component}">
-      <CustomerPageLayout v-if="customer">
-        <MyPageLayout v-if="route.path.startsWith('/my-')">
-          <component
-            :is="serviceComponent||Component"
-            :key="$route.path"
-            @vue:mounted="mounted"
-            @vue:unmounted="unmounted"
-          />
-        </MyPageLayout>
-        <component
-          v-else
-          :is="serviceComponent||Component"
-          :key="$route.path"
-          @vue:mounted="mounted"
-          @vue:unmounted="unmounted"
-        />
-      </CustomerPageLayout>
-      <ServiceAppLayout v-else-if="appService">
+      <ServiceAppLayout v-if="appService">
         <component :is="serviceComponent" :key="$route.path" />
       </ServiceAppLayout>
       <component
@@ -201,7 +174,7 @@ function unmounted(vnode: VNode) {
       />
     </RouterView>
     <AdminAppNav v-if="managerApp&&route.path!=='/admin-app/menu'" />
-    <CustomerFooter v-if="customer" />
-    <PublicChatbot v-if="customer" />
+    <PublicChatbot v-if="route.path.startsWith('/customer-app/')" />
+    <CustomerRuGuide :key="managerApp?'manager-guide':'customer-guide'" :manager="managerApp" />
   </div>
 </template>

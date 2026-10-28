@@ -88,16 +88,17 @@ async function withdraw() {
   <section class="account-actions">
     <h2>계정 관리</h2>
     <div>
-      <button type="button" :disabled="busy" @click="openPassword">비밀번호 변경</button>
-      <button type="button" :disabled="busy" @click="error='';password='';dialog?.showModal()">회원탈퇴</button>
+      <button type="button" aria-label="비밀번호 변경" :disabled="busy" @click="openPassword"><UiIcon v-if="route.path.startsWith('/admin-app/')" name="user" /><span>비밀번호 변경</span><span v-if="route.path.startsWith('/admin-app/')" class="account-menu-chevron" aria-hidden="true">›</span></button>
+      <button type="button" aria-label="회원탈퇴" :disabled="busy" @click="error='';password='';dialog?.showModal()"><UiIcon v-if="route.path.startsWith('/admin-app/')" name="logout" /><span>회원탈퇴</span><span v-if="route.path.startsWith('/admin-app/')" class="account-menu-chevron" aria-hidden="true">›</span></button>
     </div>
     <p v-if="error&&!dialog?.open" role="alert">{{error}}</p>
-    <dialog
+    <WorkflowPage
+      hide-back
       ref="dialog"
       class="account-withdraw"
       @click="($event.target===dialog)&&!busy&&dialog?.close()"
     >
-      <form @submit.prevent="withdraw">
+      <form class="account-security-form" @submit.prevent="withdraw">
         <h2>회원탈퇴</h2>
         <p>탈퇴 후 이 계정으로 관리자 서비스를 이용할 수 없습니다.</p>
         <label>본인 확인 비밀번호<PasswordInput
@@ -113,10 +114,10 @@ async function withdraw() {
           <button type="submit" :disabled="busy">회원탈퇴</button>
         </div>
       </form>
-    </dialog>
+    </WorkflowPage>
     <p v-if="message" role="status">{{message}}</p>
-    <dialog ref="passwordDialog" class="account-withdraw" aria-labelledby="change-password-title">
-      <form @submit.prevent="changePassword">
+    <WorkflowPage hide-back ref="passwordDialog" class="account-withdraw" aria-labelledby="change-password-title">
+      <form class="account-security-form" @submit.prevent="changePassword">
         <h2 id="change-password-title">비밀번호 변경</h2>
         <label>현재 비밀번호<PasswordInput
             v-model="currentPassword"
@@ -146,7 +147,7 @@ async function withdraw() {
           <button type="submit" :disabled="busy">비밀번호 변경</button>
         </div>
       </form>
-    </dialog>
+    </WorkflowPage>
   </section>
 </template>
 <style scoped src="../styles/components/account-actions.css"></style>

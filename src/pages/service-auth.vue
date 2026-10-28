@@ -9,6 +9,7 @@ import ServiceFields from '../components/ServiceFields.vue'
 import { backend, queryString } from '../services/backend'
 import { loginManager } from '../services/managerSession'
 import { loginCustomer } from '../services/customerSession'
+import { markCustomerSignup } from '../services/customerOnboarding'
 import { useApp } from '../stores/app'
 import { loginDestination } from '../services/access'
 import PostcodeSearch from '../components/PostcodeSearch.vue'
@@ -368,6 +369,12 @@ async function submit() {
           }
         : Object.fromEntries(signupFields.map((field) => [field.key, values[field.key] || null]))
       await backend(base.value + '/signup', { method: 'POST', body })
+      if (!manager.value) {
+        markCustomerSignup(String(values.loginId))
+        clearTimers()
+        await router.replace(authLink('login'))
+        return
+      }
       if (manager.value) approvalEstimate.value = Date.now() + 60_000
       message.value = manager.value
         ? '가입 신청이 접수되었습니다. 약 1분 후 자동 승인되며 서버 처리에 따라 더 걸릴 수 있습니다.'
@@ -429,7 +436,7 @@ async function resend() {
 </script>
 <template>
   <component :is="manager?BackendLayout:'div'"
-    ><section class="service-workspace auth-service"
+    ><section class="service-workspace auth-service" :class="{'admin-login-card':manager&&kind==='login'}"
       ><h1
         >{{manager?'관리자':'고객'}} {{kind==='login'?'로그인':kind==='signup'?'회원가입':'비밀번호 재설정'}}</h1
       ><p v-if="kind==='signup'" class="required-guide"
@@ -587,8 +594,8 @@ async function resend() {
             :deadline="approvalEstimate"
             expired-label="승인 예상 시간이 지났습니다. 로그인으로 승인 여부를 확인해 주세요." /></p
         ><small>서버가 15초 간격으로 승인 대상을 확인합니다.</small></section
-      ><nav class="auth-links"
-        ><RouterLink :to="authLink('login')">로그인</RouterLink
+      ><!-- 웹 고객 회원서비스는 왼쪽 사이드바에 같은 메뉴가 있어서 하단 링크 줄을 숨긴다 --><nav v-if="!['/login','/signup','/password-reset'].includes(route.path)" class="auth-links"
+        ><RouterLink v-if="kind==='signup'" :to="authLink('login')">로그인</RouterLink
         ><RouterLink v-if="kind!=='signup'" :to="authLink('signup')">회원가입</RouterLink
         ><RouterLink
           v-if="!manager"

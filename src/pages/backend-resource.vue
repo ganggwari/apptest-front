@@ -1,13 +1,25 @@
 <script setup lang="ts">
+import { apiUrl } from "../services/apiOrigin"
+import AppPagination from '../components/AppPagination.vue'
+import FacilityConfiguration from '../components/FacilityConfiguration.vue'
+import NotificationDetailView from '../components/NotificationDetailView.vue'
+import { matchesKoreanSearch } from '../utils/korean-search'
 import TunnelCctvDialog from '../components/TunnelCctvDialog.vue'
+import RemainingVehicleTransfer from '../components/RemainingVehicleTransfer.vue'
+const remainingTransfer=ref<InstanceType<typeof RemainingVehicleTransfer>>()
 import { useNotificationGlow } from '../stores/notificationGlow'
+import { notificationTarget } from '../utils/notification-target'
 const notificationGlow = useNotificationGlow()
 import RiskLevelBadge from '../components/RiskLevelBadge.vue'
 import { formatPhone } from '../utils/phone'
-import { dateParts } from '../utils/display-date'
+import { dateParts, displayDate } from '../utils/display-date'
 import { riskGroup, matchesRisk, boardCategoryLabel } from '../services/backendCatalog'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { useRoute, onBeforeRouteLeave } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+import MyUnderpassList from '../components/MyUnderpassList.vue'
+import { adminResourceTitles } from '../data/adminTitles'
+import { compareFacilityPriority } from '../utils/facility-priority'
+import UnderpassVmsPanel from '../components/UnderpassVmsPanel.vue'
 import AdminFacilityList from '../components/AdminFacilityList.vue'
 import AdminAppFacilityRows from '../components/AdminAppFacilityRows.vue'
 import OcrRecordDetail from '../components/OcrRecordDetail.vue'
@@ -51,7 +63,27 @@ const route = useRoute(),
       ['/c-notice', '/info/faq', '/customer-app/notices', '/customer-app/faq'].includes(route.path),
   )
 const restored = computed(() => !customer.value && !route.path.startsWith('/admin-app/'))
+const appPage = computed(() => /^\/(admin|customer)-app\//.test(route.path))
 const facilityList = computed(() => restored.value && resourceId.value === 'facilities')
+// 카메라·임계치·전광판 관리: 왼쪽 내 지하차도 목록 + 오른쪽 선택한 지하차도의 화면
+const splitTargets: Record<string, string> = Object.fromEntries(
+  ['cameras', 'thresholds', 'display'].map(key => [key, adminResourceTitles[key]!]),
+)
+const underpassSplit = computed(
+  () => restored.value && !props.embedded && Object.hasOwn(splitTargets, resourceId.value),
+)
+// 전광판은 부모 키가 vmsId라서, 지하차도 선택을 따로 두고 범용 표 대신 지하차도별 전광판 패널을 쓴다
+const vmsSplit = computed(() => underpassSplit.value && resourceId.value === 'display')
+const splitUnderpassFields: Field[] = [
+  { key: 'underpassId', label: '지하차도', type: 'select', source: 'underpasses', required: true },
+]
+const router = useRouter()
+const splitUnderpassName = computed(
+  () => choices.underpassId?.find((option) => option.value === String(parents.underpassId || ''))?.label,
+)
+function selectUnderpass(id: string) {
+  void router.replace({ query: { ...route.query, underpassId: id, id: undefined } })
+}
 const appFacilityList = computed(
   () => route.path === '/admin-app/screen-4' && resourceId.value === 'facilities',
 )
@@ -113,18 +145,28 @@ async function review(row: Record<string, any>, number: string) {
 }
 const publicNotices = computed(() => customer.value && resourceId.value === 'notices')
 const managerNotificationList = computed(() => resourceId.value === 'manager-notifications')
-const pageSize = computed(() => route.path.startsWith('/admin-app/') ? (managerNotificationList.value ? 5 : appFacilityList.value ? 8 : 20) : route.path.startsWith('/customer-app/') ? 20 : 10)
+const pageSize = computed(() => route.path.startsWith('/admin-app/') ? 5 : route.path.startsWith('/customer-app/') ? 20 : 10)
 async function markManagerNotificationRead(row: Record<string, any>) {
   if (saving.value || row.read) return
   saving.value = true
   error.value = ''
   try {
-    await backend(`/api/managers/me/notifications/${encodeURIComponent(row.id)}/read`, { method: 'PUT' })
+    await managerNotifications.read(Number(row.id))
     row.read = true
-    await managerNotifications.refresh()
     if (filters.unreadOnly) await load()
   } catch (e) { error.value = (e as Error).message }
   finally { saving.value = false }
+}
+function managerNotificationTarget(row:Record<string,any>) {
+  if (appPage.value) return { path: route.path, query: { ...route.query, notification: String(row.id) } }
+  return notificationTarget({id:Number(row.id),refType:row.refType,refId:row.refId,regionId:row.regionId},true,route.path,route.path)
+}
+async function openManagerNotification(event:MouseEvent,row:Record<string,any>) {
+  if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||event.button!==0)return
+  event.preventDefault()
+  if(saving.value)return
+  if(!row.read)await markManagerNotificationRead(row)
+  if(row.read)await router.push(managerNotificationTarget(row))
 }
 const readNotices = ref<Record<string, string>>({})
 const noticeReadKey = computed(
@@ -158,10 +200,15 @@ function markNoticeRead(row: Record<string, any>) {
   }
 }
 async function loadCollection(signal: AbortSignal) {
+  // 관리자 시설 목록은 담당 지역만 (서버 기본값은 전체 ALL)
+  const scope =
+    (facilityList.value || appFacilityList.value) && app.account?.role === 'REGIONAL_ADMIN' ? 'MINE' : ''
+  const collectionFilters = { ...filters }
+  if (facilityList.value || appFacilityList.value) delete collectionFilters.keyword
   const fetchPage = async (current: number) =>
     asPage<Record<string, any>>(
       await backend(
-        path(resource.value.path) + queryString({ ...filters, page: current, size: 100 }),
+        path(resource.value.path) + queryString({ ...collectionFilters, scope, page: current, size: 100 }),
         { signal },
       ),
       current,
@@ -171,6 +218,12 @@ async function loadCollection(signal: AbortSignal) {
     items = [...first.items]
   for (let current = 2; current <= first.totalPages; current++)
     items.push(...(await fetchPage(current)).items)
+  if(resourceId.value==='cars') return {items,page:1,size:items.length,totalItems:items.length,totalPages:1}
+  if(!signal.aborted&&(facilityList.value||appFacilityList.value)) facilitySearchRows.value=[...items]
+  if ((facilityList.value || appFacilityList.value) && filters.keyword) {
+    const matched = items.filter(row => matchesKoreanSearch([row.name,row.regionName,row.roadAddress].filter(Boolean).join(' '),filters.keyword))
+    items.splice(0,items.length,...matched)
+  }
   if (['notices', 'faqs'].includes(resourceId.value)) {
     const views = (row: Record<string, any>) => {
       const count = Number(row.viewCount)
@@ -187,6 +240,7 @@ async function loadCollection(signal: AbortSignal) {
     const selected = items.filter((row) => matchesRisk(row.currentRiskLevel, riskFilter.value))
     items.splice(0, items.length, ...selected)
   }
+  if (appFacilityList.value) items.sort(compareFacilityPriority)
   const size = pageSize.value
   const totalPages = Math.ceil(items.length / size)
   page.value = Math.min(page.value, Math.max(1, totalPages))
@@ -210,7 +264,17 @@ const pageTitle = computed(() =>
       ? '자주 묻는 질문 (FAQ)'
       : resource.value.title,
 )
+function presetMessage(row: Record<string, any>) {
+  const content = String(row.content ?? '')
+  const label = resource.value.filters?.[0]?.options?.find(([value]) => value === row.category)?.[1]
+  if (!label || !content.startsWith(label)) return content
+  const remainder = content.slice(label.length)
+  return /^\s*[—–\-:：|·]\s*/.test(remainder)
+    ? remainder.replace(/^\s*[—–\-:：|·]\s*/, '') || content
+    : content
+}
 function displayField(key: string, value: any) {
+  if (key === 'earlyBlock' && typeof value === 'boolean') return value ? '대상' : '대상 아님'
   if (['phone', 'emergency'].includes(key)) return formatPhone(value) || '—'
   return resourceId.value === 'notices' && key === 'important'
     ? value
@@ -225,6 +289,7 @@ function resourceLink(id: string) {
     ocr: '/admin-app/ocr',
     reviews: '/admin-app/reviews',
     transits: '/admin-app/transits',
+    transfers: '/admin-app/transfers',
     facilities: '/admin-app/screen-4',
     alerts: '/admin-app/screen-13',
     'manager-notifications': '/admin-app/notifications',
@@ -246,6 +311,7 @@ function resourceLink(id: string) {
   )
   const query: Record<string, string> = {}
   for (const key of ['underpassId', 'regionId', 'carNum']) {
+    if (key === 'regionId' && (parents.underpassId || filters.underpassId)) continue
     const value = parents[key] || filters[key]
     if (supported.has(key) && value !== undefined && value !== null && value !== '')
       query[key] = String(value)
@@ -272,6 +338,35 @@ const filters = reactive<Record<string, any>>({}),
   parents = reactive<Record<string, any>>({}),
   choices = reactive<Record<string, { value: string; label: string }[]>>({}),
   values = reactive<Record<string, any>>({})
+const facilitySearchRows = ref<Record<string, any>[]>([])
+function facilityCount(level:string){
+  const rows=facilitySearchRows.value.filter(row=>!filters.keyword||matchesKoreanSearch([row.name,row.regionName,row.roadAddress].filter(Boolean).join(' '),filters.keyword))
+  return rows.filter(row=>!level||matchesRisk(row.currentRiskLevel,level)).length
+}
+const facilitySearchOpen = ref(false), facilitySearchIndex = ref(-1)
+const facilitySuggestions = computed(() => !String(filters.keyword||'').trim() ? [] : facilitySearchRows.value.filter(row =>
+  (!riskFilter.value || matchesRisk(row.currentRiskLevel,riskFilter.value)) &&
+  matchesKoreanSearch([row.name,row.regionName,row.roadAddress].filter(Boolean).join(' '),filters.keyword)
+).slice(0,6))
+function chooseFacilitySuggestion(row: Record<string, any>) {
+  filters.keyword=row.name
+  facilitySearchOpen.value=false; facilitySearchIndex.value=-1
+  search()
+}
+function facilitySearchKey(event: KeyboardEvent) {
+  if(event.isComposing) return
+  if(event.key==='Escape') { event.preventDefault(); facilitySearchOpen.value=false; facilitySearchIndex.value=-1 }
+  else if((event.key==='ArrowDown'||event.key==='ArrowUp')&&facilitySuggestions.value.length) {
+    event.preventDefault(); facilitySearchOpen.value=true
+    const count=facilitySuggestions.value.length
+    facilitySearchIndex.value=facilitySearchIndex.value<0
+      ? event.key==='ArrowDown'?0:count-1
+      : (facilitySearchIndex.value+(event.key==='ArrowDown'?1:-1)+count)%count
+  } else if(event.key==='Enter'&&facilitySearchOpen.value&&facilitySearchIndex.value>=0) {
+    const row=facilitySuggestions.value[facilitySearchIndex.value]
+    if(row) { event.preventDefault(); chooseFacilitySuggestion(row) }
+  }
+}
 const acknowledge = ref(false)
 const data = ref<PageData<Record<string, any>>>({
     items: [],
@@ -306,13 +401,21 @@ function path(template: string, row = selected.value) {
 const missingParent = computed(() =>
   resource.value?.parents?.some((field) => field.required && !parents[field.key]),
 )
+const recordFacilityRegions = reactive<Record<string, string>>({})
+function syncRecordRegion() {
+  if (['ocr', 'reviews', 'transits'].includes(resourceId.value) && filters.underpassId)
+    filters.regionId = recordFacilityRegions[String(filters.underpassId)] || ''
+}
 async function lookup(fields: Field[], row?: Record<string, any>) {
   const scope = resourceId.value
+  const lookupRoute = resourceRouteKey()
+  const myTransfers = scope === 'transfers' && app.account?.role === 'REGIONAL_ADMIN'
+  const myRecords = ['ocr', 'reviews', 'transits'].includes(scope) && app.account?.role === 'REGIONAL_ADMIN'
   for (const field of fields) {
     if (!field.source) continue
     let url =
       field.source === 'underpasses'
-        ? '/api/underpasses?size=500'
+        ? '/api/underpasses?size=500' + (underpassSplit.value || app.account?.role === 'REGIONAL_ADMIN' ? '&scope=MINE&sort=NAME' : '')
         : field.source === 'regions'
           ? '/api/regions'
           : field.source === 'shifts'
@@ -332,14 +435,40 @@ async function lookup(fields: Field[], row?: Record<string, any>) {
     if (field.source === 'cameras' && !row?.id && !parents.underpassId) continue
     try {
       const result = await backend(url)
-      if (alive && scope === resourceId.value && (!row || selected.value?.id === row.id))
-        choices[field.key] = asPage<any>(result).items.map((item) => ({
+      // 관리자 시설 목록의 지역 필터는 담당 지역만 (목록 자체가 scope=MINE 이라 다른 지역은 0건)
+      const mine =
+        field.source === 'regions' &&
+        (facilityList.value || appFacilityList.value || myRecords) &&
+        resource.value.filters?.includes(field) &&
+        app.account?.role === 'REGIONAL_ADMIN'
+          ? new Set((app.account.regions || []).map((region) => String(region.id)))
+          : undefined
+      if (alive && scope === resourceId.value && lookupRoute === resourceRouteKey() && (!row || selected.value?.id === row.id)) {
+        const items = asPage<any>(result).items.filter((item) =>
+          (!mine || mine.has(String(item.id))) &&
+          !(app.account?.role === 'REGIONAL_ADMIN' && field.source === 'underpasses' && !ownsFacility(item)))
+        if (myRecords && field.source === 'underpasses' && !row) {
+          for (const key of Object.keys(recordFacilityRegions)) delete recordFacilityRegions[key]
+          for (const item of items) {
+            const region = item.assignedRegionId ?? item.regionId ?? item.region?.id
+            if (region != null) recordFacilityRegions[String(item.id)] = String(region)
+          }
+          syncRecordRegion()
+        }
+        choices[field.key] = items.map((item) => ({
           value: String(item.id),
           label:
             field.source === 'vms'
               ? `${item.name}${item.dummy ? ' (시연용)' : ''} · ${item.id}`
               : item.name || item.content || `${item.cameraRole} · ${item.id}`,
         }))
+        // 이관 문서는 담당 지하차도로 바로 진입하되, 문서 링크의 시설 선택은 유지한다.
+        if (myTransfers && !row && field.key === 'underpassId' &&
+            resource.value.parents?.includes(field) && !parents.underpassId &&
+            !route.query.underpassId && choices[field.key]?.length) {
+          selectUnderpass(choices[field.key]![0]!.value)
+        }
+      }
     } catch {
       /* Main list retains its own request error. */
     }
@@ -348,6 +477,7 @@ async function lookup(fields: Field[], row?: Record<string, any>) {
 async function load() {
   if (props.operationsOnly) return
   if (!resource.value || missingParent.value) return
+  syncRecordRegion()
   abort?.abort()
   abort = new AbortController()
   const seq = ++request
@@ -357,7 +487,7 @@ async function load() {
     if (filters.startDate && filters.endDate && filters.startDate > filters.endDate)
       throw new Error('시작일은 종료일보다 늦을 수 없습니다.')
     const result =
-      ['notices', 'faqs'].includes(resourceId.value) || managerNotificationList.value || facilityList.value || appFacilityList.value
+      ['notices', 'faqs', 'cars'].includes(resourceId.value) || managerNotificationList.value || facilityList.value || appFacilityList.value
         ? await loadCollection(abort.signal)
         : await backend(
             path(resource.value.path) + queryString({ ...filters, page: page.value, size: pageSize.value }),
@@ -380,7 +510,7 @@ function imageUrl(value: string) {
   if (!value) return ''
   const parts = value.replace(/^\/api\/uploads\//, '').split(/[\\/]/)
   if (parts.some((part) => part === '..' || part === '.') || value.includes(':')) return ''
-  return '/api/uploads/' + parts.filter(Boolean).map(encodeURIComponent).join('/')
+  return apiUrl('/api/uploads/' + parts.filter(Boolean).map(encodeURIComponent).join('/'))
 }
 function display(value: any) {
   if (value == null || value === '') return '—'
@@ -424,8 +554,14 @@ function closeSummaryBackdrop(event: MouseEvent) {
   summaryBackdropDown = false
 }
 async function open(kind: string, row?: Record<string, any>, itemAction?: Action) {
-  if (resource.value.detailFromRow && row)
-    row = data.value.items.find((item) => String(item.id) === String(row?.id)) || row
+  if (resource.value.detailFromRow && row) {
+    const record = data.value.items.find((item) => String(item.id) === String(row?.id))
+    if (!record && Object.keys(row).every(key => key === 'id')) {
+      error.value = '선택한 기록을 현재 조회 목록에서 찾을 수 없습니다. 담당 지역·지하차도·조회 기간을 확인한 뒤 목록에서 기록을 선택해 주세요.'
+      return
+    }
+    row = record || row
+  }
   if (!['detail', 'video'].includes(kind) && !canWrite.value) {
     error.value = '이 작업을 수행할 권한이 없습니다.'
     return
@@ -616,7 +752,9 @@ async function submit() {
     if (resourceId.value === 'my-inquiries' && mode.value === 'create')
       sessionStorage.removeItem('routel-inquiry-draft')
     modal.value?.close()
-    message.value = '요청이 처리되었습니다.'
+    message.value = controlStatus
+      ? '경찰·소방 통제 안내 기록이 함께 생성되었습니다. 경찰 PDF가 내려받아지며, 소방 PDF는 이관 문서에서 확인할 수 있습니다.'
+      : '요청이 처리되었습니다.'
     await load()
     if (resourceId.value === 'manager-notifications') await managerNotifications.refresh()
     if (
@@ -633,13 +771,67 @@ async function submit() {
     saving.value = false
   }
 }
+function recordFilterChanged(event: Event) {
+  if (['ocr', 'reviews', 'transits'].includes(resourceId.value)) {
+    const label = (event.target as HTMLElement).getAttribute('aria-label')
+    if (label === '담당 지역') filters.underpassId = ''
+    if (label === '지하차도') syncRecordRegion()
+  }
+  if (customer.value) search()
+}
+// OCR 상세 API는 별도로 없으므로 알림의 기록을 목록 페이지에서 찾는다.
+// 현재 화면 첫 페이지에 없다는 이유만으로 빈 상세를 열지 않는다.
+async function openLinkedOcrRecord(id: string) {
+  const seq = request, signal = abort?.signal
+  let record = data.value.items.find(item => String(item.id) === id)
+  loading.value = true
+  try {
+    if (!record) {
+      let current = 1, total = 1
+      do {
+        const result = asPage<any>(await backend('/api/plate-logs' + queryString({
+          ...filters, page: current, size: 100,
+        }), { signal }), current, 100)
+        if (!alive || seq !== request || signal?.aborted) return
+        record = result.items.find(item => String(item.id) === id)
+        total = result.totalPages
+        current++
+      } while (!record && current <= total)
+    }
+    if (!alive || seq !== request || signal?.aborted) return
+    if (!record) {
+      await open('detail', { id: Number(id) })
+      return
+    }
+    if (record.underpassId != null && String(filters.underpassId) !== String(record.underpassId)) {
+      filters.underpassId = String(record.underpassId)
+      syncRecordRegion()
+      page.value = 1
+      await load()
+      if (!alive || error.value || String(route.query.id) !== id) return
+    }
+    await open('detail', record)
+  } catch (e) {
+    if (seq === request && !signal?.aborted) error.value = (e as Error).message
+  } finally {
+    if (seq === request) loading.value = false
+  }
+}
 function search() {
+  facilitySearchOpen.value=false; facilitySearchIndex.value=-1
   page.value = 1
   void load()
 }
 function navigatePage(next: number) {
   page.value = next
   void load()
+}
+function resetRecordFilters() {
+  for(const field of resource.value.filters||[]) {
+    if(field.key==='reviewStatus'&&resourceId.value==='reviews')continue
+    filters[field.key]=field.type==='checkbox'?false:''
+  }
+  search()
 }
 const labels = computed(() =>
   Object.fromEntries([
@@ -659,14 +851,48 @@ const labels = computed(() =>
     ['sortOrder', '표시 순서'],
   ]),
 )
+const facilitySummaryGroups = computed(() => {
+  const row = detail.value
+  const regionName = row.regionName || selected.value?.regionName ||
+    choices.regionId?.find(option => option.value === String(row.regionId))?.label
+  const groups: { title: string; fields: [string, string, unknown][] }[] = [
+    { title: '위치', fields: [
+      ['region', '지역', regionName], ['roadAddress', '주소', row.roadAddress],
+    ] },
+    { title: '시설 제원', fields: [
+      ['heightM', '높이', row.heightM], ['lengthM', '길이', row.lengthM],
+      ['widthM', '폭', row.widthM], ['lanes', '차로 수', row.lanes],
+      ['safetyGrade', '안전등급', row.safetyGrade],
+    ] },
+    { title: '안전 정보', fields: [
+      ['currentWaterCm', '현재 수위', row.currentWaterCm],
+      ['earlyBlock', '선제 차단 대상', row.earlyBlock],
+      ['riverDistM', '하천 거리', row.riverDistM], ['seaDistM', '바다 거리', row.seaDistM],
+      ['floodHistoryCount', '과거 침수 횟수', row.floodHistoryCount],
+    ] },
+    { title: '차량 현황', fields: [
+      ['remainingCount', '잔류 차량', row.remainingCount], ['pendingReviewCount', '판별 대기', row.pendingReviewCount],
+    ] },
+  ]
+  return groups.map(group => ({ ...group, fields: group.fields.filter(([, , value]) => value != null && value !== '') }))
+    .filter(group => group.fields.length)
+})
+const facilityFieldUnits: Record<string, string> = {
+  heightM: 'm', lengthM: 'm', widthM: 'm', lanes: '차로', currentWaterCm: 'cm',
+  riverDistM: 'm', seaDistM: 'm', floodHistoryCount: '회', remainingCount: '대', pendingReviewCount: '건',
+}
+function resourceRouteKey() {
+  return route.path+JSON.stringify(Object.entries(route.query).filter(([key])=>key!=='__view'))
+}
 watch(
-  () => route.fullPath,
+  resourceRouteKey,
   () => {
     abort?.abort()
     request++
     modal.value?.close()
-    for (const obj of [filters, parents, choices])
+    for (const obj of [filters, parents, choices, recordFacilityRegions])
       Object.keys(obj).forEach((key) => delete obj[key])
+    facilitySearchRows.value=[]; facilitySearchOpen.value=false; facilitySearchIndex.value=-1
     page.value = 1
     data.value = { items: [], page: 1, size: pageSize.value, totalItems: 0, totalPages: 0 }
     error.value = ''
@@ -676,12 +902,18 @@ watch(
     }
     for (const field of resource.value.parents || [])
       parents[field.key] = route.query[field.key] || ''
+    // 지하차도 상세 안의 설비·설정 표: 주소에 underpassId 없이 ?id= 만 와도 그 지하차도로 본다
+    if (props.embedded && route.path === '/fac-detail' && 'underpassId' in parents && !parents.underpassId)
+      parents.underpassId = route.query.id || ''
+    if (vmsSplit.value) parents.underpassId = route.query.underpassId || ''
     for (const field of resource.value.filters || [])
       filters[field.key] =
         field.type === 'checkbox' ? route.query[field.key] === 'true' : route.query[field.key] || ''
-    if (app.account?.role === 'REGIONAL_ADMIN' && app.account.regions?.length === 1 &&
+    // 담당 지역이 하나일 때만 자동 선택한다. 여러 곳이면 담당 지역 전체를 조회한다.
+    if (app.account?.role === 'REGIONAL_ADMIN' && app.account.regions?.length &&
+        app.account.regions.length === 1 &&
         resource.value.filters?.some(field => field.key === 'regionId') &&
-        route.query.regionId == null && route.query.underpassId == null)
+        route.query.regionId == null && route.query.underpassId == null && !(resourceId.value === 'ocr' && route.query.id))
       filters.regionId = String(app.account.regions[0]!.id)
     if (resourceId.value === 'alerts' && alertLogReturn.path) {
       Object.assign(filters, alertLogReturn.filters)
@@ -689,9 +921,12 @@ watch(
     }
     if (props.operationsOnly) return
     if (resourceId.value === 'reviews' && !filters.reviewStatus) filters.reviewStatus = 'PENDING'
-    void lookup([...(resource.value.parents || []), ...(resource.value.filters || [])])
+    void lookup([...(vmsSplit.value ? splitUnderpassFields : resource.value.parents || []), ...(resource.value.filters || [])])
     void load().then(() => {
-      if (!props.embedded && route.query.id && resource.value.detail && resourceId.value !== 'faqs')
+      if (error.value) return
+      if (!props.embedded && route.query.id && resourceId.value === 'ocr')
+        void openLinkedOcrRecord(String(route.query.id))
+      else if (!props.embedded && route.query.id && resource.value.detail && resourceId.value !== 'faqs')
         void open('detail', { id: Number(route.query.id) })
       else if (route.path === '/my-inquiry-new')
         void open('create').then(() => {
@@ -768,7 +1003,13 @@ useBackendEvents((event) => {
   }
   if (resourceId.value === 'facilities' && facilityEvents.includes(name)) {
     data.value.items = data.value.items.map((row) => patchFacility(row, event))
+    if (appFacilityList.value) data.value.items.sort(compareFacilityPriority)
     if (mode.value === 'detail') detail.value = patchFacility(detail.value, event)
+    // 행만 고치면 필터에서 빠져야 할 행·새로 들어올 행·정렬·건수가 안 맞으니, 그 조건에 걸리는 값이 바뀌면 다시 조회
+    const levelOrStatus = name === 'control-change' || name === 'risk-level-change'
+    if ((levelOrStatus && (filters.status || riskFilter.value)) || filters.sort === 'RISK_SCORE' ||
+        (appFacilityList.value && name !== 'water-update'))
+      queueLiveRefresh()
     return
   }
   if (resourceId.value === 'ocr' && name.startsWith('plate-queue-')) {
@@ -849,32 +1090,43 @@ defineExpose({ open, load })
 </script>
 <template>
   <component :is="customer||props.embedded?'div':BackendLayout">
+    <NotificationDetailView v-if="managerNotificationList&&route.query.notification" manager />
     <section
-      v-if="resource"
+      v-else-if="resource"
       class="service-workspace"
-      :class="{'restored-admin-workspace':restored,'resource-operations-only':props.operationsOnly}"
+      :data-resource="resourceId"
+      :class="{'restored-admin-workspace':restored,'resource-operations-only':props.operationsOnly,'underpass-workspace':underpassSplit,'camera-config-workspace':underpassSplit&&resourceId==='cameras'}"
     >
       <RouterLink
         v-if="!customer&&resourceId==='faqs'&&alertLogReturn.path"
         :to="alertLogReturn.path"
         class="alert-log-return"
       >← 알림 발송 기록으로 돌아가기</RouterLink>
-      <div v-if="restored" class="crumb">{{customerService?'고객 서비스':pageTitle}}</div>
-      <div class="service-heading page-head">
-        <component :is="props.embedded?'h2':'h1'">{{pageTitle}}</component>
+      <!-- 제목과 같은 글자를 위에 한 번 더 쓰지 않는다 (고객 서비스 묶음 이름만 표시) -->
+      
+      <div class="service-heading page-head" :class="{'app-resource-heading':appPage&&!props.embedded,'review-page-heading':resourceId==='reviews','record-page-heading':!appPage&&!props.embedded&&['ocr','reviews','transits'].includes(resourceId)}">
+        <component :is="props.embedded?'h2':'h1'"><AdminPageIcon v-if="!props.embedded&&!appPage" />{{pageTitle}}</component>
         <div class="service-actions">
+          <RouterLink v-if="resourceId==='ocr'&&!appPage" class="btn" :to="resourceLink('reviews')">번호판 판별 대기</RouterLink>
+          <nav v-if="!customer&&!appPage&&!props.embedded&&shortcuts.length" class="heading-navigation" aria-label="관련 업무 바로가기">
+            <RouterLink v-for="link in shortcuts" :key="link.id" class="btn" :to="resourceLink(link.id)">{{adminResourceTitles[link.id]||link.label}}</RouterLink>
+          </nav>
+          <span v-if="underpassSplit&&!vmsSplit&&parents.underpassId&&!loading" class="split-result-count" role="status">총 {{data.totalItems}}건</span>
           <button
             v-if="resourceId==='manager-notifications'"
             type="button"
             :disabled="saving"
             @click="readAllManagerNotifications"
           >모두 읽음</button>
-          <button type="button" :disabled="loading||missingParent" @click="load">새로고침</button>
-          <button v-if="resource.create&&canWrite" type="button" @click="open('create')">
+          <button v-if="!vmsSplit&&!appPage" class="resource-refresh" type="button" :disabled="loading||missingParent" @click="load">새로고침</button>
+          <button v-if="resource.create&&canWrite&&!vmsSplit" type="button" @click="open('create')">
             {{resourceId==='cars'?'차량 등록':resourceId==='my-inquiries'?'문의 등록':facilityList?'+ 지하차도 등록':'새로 등록'}}
           </button>
         </div>
       </div>
+      <nav v-if="!customer&&!appPage&&!props.embedded&&relatedIds.length>1" class="service-tabs tabs page-selection-tabs" aria-label="업무 구분">
+        <RouterLink v-for="id in relatedIds" :key="id" class="btn" :to="resourceLink(id)" :aria-current="resourceId===id?'page':undefined">{{backendResources[id]?.title}}</RouterLink>
+      </nav>
       <nav v-if="publicNotices" class="notice-category-tabs" aria-label="공지사항 분류">
         <button
           v-for="[label,value] in [['전체',''],['중요','true'],['일반','false']]"
@@ -885,20 +1137,6 @@ defineExpose({ open, load })
         >
           {{label}}
         </button>
-      </nav>
-      <nav
-        v-if="!customer&&!props.embedded&&relatedIds.length>1"
-        class="service-tabs tabs"
-        aria-label="업무 구분"
-      >
-        <RouterLink
-          v-for="id in relatedIds"
-          :key="id"
-          :to="resourceLink(id)"
-          :aria-current="resourceId===id?'page':undefined"
-        >
-          {{backendResources[id]?.title}}
-        </RouterLink>
       </nav>
       <nav v-if="restored&&resourceId==='reviews'" class="tabs review-tabs" aria-label="판별 구분">
         <button
@@ -912,6 +1150,9 @@ defineExpose({ open, load })
           @click="reviewTab('')"
         >처리 이력</button>
       </nav>
+      <div :class="underpassSplit?'underpass-split':'resource-body'">
+      <MyUnderpassList v-if="underpassSplit" :selected-id="String(parents.underpassId||'')" @select="selectUnderpass" :target="splitTargets[resourceId]" />
+      <div :class="underpassSplit?'underpass-split-main':'resource-body'">
       <form
         v-if="facilityList||appFacilityList"
         class="filters restored-facility-filters"
@@ -922,12 +1163,12 @@ defineExpose({ open, load })
           <button
             v-for="[value,label] in [['','전체'],['DANGER','위험'],['WARNING','주의'],['SAFE','안전']]"
             :key="value"
-            class="chip"
+            class="chip" :class="{'facility-summary-button':appFacilityList}"
             type="button"
             :aria-pressed="riskFilter===value"
             @click="riskFilter=value;search()"
           >
-            {{label}}
+            <template v-if="appFacilityList"><span>{{label}}</span><strong :data-level="value">{{facilityCount(value)}}</strong></template><template v-else>{{label}}</template>
           </button>
         </div>
         <select v-model="filters.regionId" aria-label="담당 지역" @change="search">
@@ -941,62 +1182,111 @@ defineExpose({ open, load })
           <option value="BLOCKED">통제 중</option>
           <option value="NORMAL">정상 운영</option>
         </select>
+        <div class="facility-autocomplete">
         <input
           v-model="filters.keyword"
           type="search"
           placeholder="지하차도 이름 검색"
           aria-label="지하차도 이름 검색"
+          role="combobox" autocomplete="off" aria-autocomplete="list"
+          :aria-expanded="facilitySearchOpen&&facilitySuggestions.length>0"
+          aria-controls="facility-search-suggestions"
+          :aria-activedescendant="facilitySearchOpen&&facilitySearchIndex>=0?'facility-suggestion-'+facilitySearchIndex:undefined"
+          @focus="facilitySearchOpen=true"
+          @input="facilitySearchOpen=true;facilitySearchIndex=-1"
+          @blur="facilitySearchOpen=false;facilitySearchIndex=-1"
+          @keydown="facilitySearchKey"
         />
+        <ul v-if="facilitySearchOpen&&facilitySuggestions.length" id="facility-search-suggestions" class="facility-search-suggestions" role="listbox" aria-label="지하차도 검색 추천">
+          <li v-for="(row,index) in facilitySuggestions" :key="row.id" role="presentation">
+            <button :id="'facility-suggestion-'+index" type="button" role="option" :aria-selected="facilitySearchIndex===index" @pointerdown.prevent @click="chooseFacilitySuggestion(row)"><strong>{{row.name}}</strong><small>{{row.regionName||row.roadAddress}}</small></button>
+          </li>
+        </ul>
+        </div>
         <button class="btn sm" type="submit">조회</button>
       </form>
       <form v-else-if="managerNotificationList" class="manager-notification-filters" @submit.prevent="search">
         <label>분류<select v-model="filters.category" @change="search"><option value="">전체 알림</option><option v-for="[value,label] in resource.filters?.[0]?.options||[]" :key="value" :value="value">{{label}}</option></select></label>
         <label class="manager-unread-filter"><input v-model="filters.unreadOnly" type="checkbox" @change="search" />안 읽은 알림만</label>
       </form>
+      <div v-else-if="['presets','reasons'].includes(resourceId)&&!appPage" class="preset-category-filter">
+        <span class="preset-filter-title">{{resourceId==='reasons'?'통제 유형':'문구 분류'}}</span>
+        <nav :aria-label="resourceId==='reasons'?'통제 사유 유형':'전광판 문구 분류'">
+          <button v-for="[value,label] in [['','전체'],...(resource.filters?.[0]?.options||[])]" :key="value" type="button" :aria-pressed="String(filters[resourceId==='reasons'?'type':'category']||'')===value" @click="filters[resourceId==='reasons'?'type':'category']=value;search()">{{label}}</button>
+        </nav>
+      </div>
       <form
-        v-else-if="!customer||resource.parents?.length||resource.filters?.length"
+        v-else-if="!underpassSplit&&(resource.parents?.length||resource.filters?.length)"
         class="service-filters filters"
         @submit.prevent="search"
-        @change="customer&&search()"
+        @change="recordFilterChanged"
       >
         <ServiceFields
           v-if="resource.parents?.length"
           :fields="resource.parents"
           :values="parents"
           :choices="choices"
+          hide-guide
         />
         <ServiceFields
           v-if="resource.filters?.length"
           :fields="resource.filters"
           :values="filters"
           :choices="choices"
+          empty-label="전체"
         />
         <button v-if="!customer" type="submit" :disabled="loading">
           {{resourceId==='my-inquiries'?'검색':'조회'}}
         </button>
       </form>
-      <nav
-        v-if="!customer&&!props.embedded&&shortcuts.length"
-        class="resource-shortcuts"
-        aria-label="관련 업무 바로가기"
-      >
-        <RouterLink v-for="link in shortcuts" :key="link.id" :to="resourceLink(link.id)">
-          {{link.label}} →</RouterLink>
-      </nav>
       <p v-if="error" class="service-error" role="alert">
         {{error}} <RouterLink v-if="!app.account" :to="customer?'/login':'/admin-login'">로그인</RouterLink>
       </p>
-      <p v-if="message" class="service-message" role="status">{{message}}</p>
-      <p v-if="missingParent">위에서 {{resource.parents?.map(field=>field.label).join(' · ')}}를 선택하고 조회하세요.</p>
+      <p v-if="message" class="service-message" role="status">{{message}} <RouterLink v-if="resourceId==='facilities'&&selected?.id&&mode==='action'&&/\/(block|release)$/.test(action?.path||'')" :to="{path:'/admin-data/transfers',query:{underpassId:String(selected.id)}}">경찰·소방 문서 보기 →</RouterLink></p>
+      <div v-if="underpassSplit&&!parents.underpassId" class="configuration-pick-facility"><span aria-hidden="true"><UiIcon name="location" /></span><h2>관리할 지하차도를 선택하세요</h2><p>왼쪽 내 지하차도 목록에서 시설을 선택하면<br />해당 시설의 {{splitTargets[resourceId]}} 등록 현황과 설정을 확인할 수 있습니다.</p></div>
+      <UnderpassVmsPanel
+        v-else-if="vmsSplit"
+        :key="String(parents.underpassId)"
+        :underpass-id="String(parents.underpassId)"
+        :underpass-name="splitUnderpassName"
+        :manageable="!!splitUnderpassName"
+      />
+      <p v-else-if="missingParent">위에서 {{resource.parents?.map(field=>field.label).join(' · ')}}를 선택하고 조회하세요.</p>
       <p v-else-if="loading" role="status">불러오는 중입니다.</p>
       <template v-else>
-        <p class="service-result-count" role="status">총 {{data.totalItems}}건</p>
-        <AdminAppFacilityRows v-if="appFacilityList" :items="facilityRows" />
+        <p v-if="!underpassSplit" class="service-result-count" role="status">총 {{data.totalItems}}건</p>
+        <section v-if="!appPage&&!data.items.length&&['ocr','reviews','transits'].includes(resourceId)" class="record-empty-state" role="status">
+          <span class="record-empty-icon" aria-hidden="true"><UiIcon :name="resourceId==='reviews'?'eye':'camera'" /></span>
+          <div><h2>{{resourceId==='reviews'&&filters.reviewStatus==='PENDING'?'조건에 맞는 판별 대기가 없습니다':'조건에 맞는 기록이 없습니다'}}</h2><p>담당 지역·지하차도·조회 기간을 확인하거나 검색 조건을 초기화해 주세요.</p></div>
+          <button type="button" @click="resetRecordFilters">검색 조건 초기화</button>
+        </section>
+        <section v-else-if="resourceId==='cars'" class="customer-car-overview">
+          <div class="customer-car-guide"><span aria-hidden="true"><UiIcon name="bell" /></span><p>등록한 차량의 안전 알림을 받을 수 있어요.<br /><small>차량 번호가 정확한지 확인해 주세요.</small></p></div>
+          <ul class="customer-car-list" aria-label="등록 차량 목록">
+            <li v-for="row in data.items" :key="row.id">
+              <div class="customer-car-identity"><span class="customer-car-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 9 2-5h10l2 5M4 9h16v9H4zM7 18v3m10-3v3M7 13h2m6 0h2M4 9 2 8m18 1 2-1" stroke-linecap="round" stroke-linejoin="round" /></svg></span><div><small>등록 차량</small><strong>{{row.carNum}}</strong></div></div>
+              <div class="customer-car-footer"><time :datetime="row.createdAt">{{displayDate(row.createdAt,false)}} 등록</time><div><button v-if="canEditRow(row)" type="button" :aria-label="row.carNum+' 수정'" @click="open('edit',row)">수정</button><button v-if="resource.remove&&canWrite" type="button" class="customer-car-delete" :aria-label="row.carNum+' 삭제'" @click="open('remove',row)">삭제</button></div></div>
+            </li>
+          </ul>
+          <p v-if="!data.items.length" class="customer-car-empty">등록된 차량이 없습니다.<br />차량을 등록하고 안전 알림을 받아 보세요.</p>
+        </section>
+        <section v-else-if="resourceId==='my-inquiries'" class="customer-inquiry-overview">
+          <div class="customer-inquiry-guide"><UiIcon name="chat" /><div><strong>궁금한 점을 남겨 주세요</strong><p>보내신 문의와 답변을 여기에서 확인할 수 있어요.</p></div></div>
+          <ul class="customer-inquiry-list" aria-label="내 문의 목록">
+            <li v-for="row in data.items" :key="row.id">
+              <button type="button" class="customer-inquiry-open" :aria-label="row.title+' 상세 보기'" @click="open('detail',row)"><span class="customer-inquiry-meta"><span class="customer-inquiry-status" :class="{'is-done':['ANSWERED','RESOLVED','CLOSED','COMPLETED'].includes(String(row.status))}">{{displayField('status',row.status)}}</span><time :datetime="row.createdAt">{{displayDate(row.createdAt,false)}}</time></span><span class="customer-inquiry-title"><strong>{{row.title}}</strong><span aria-hidden="true">›</span></span><p v-if="row.content">{{row.content}}</p><small>문의 내용과 답변 확인</small></button>
+              <div v-if="canEditRow(row)||resource.remove&&canWrite" class="customer-inquiry-actions"><button v-if="canEditRow(row)" type="button" :aria-label="row.title+' 수정'" @click="open('edit',row)">수정</button><button v-if="resource.remove&&canWrite" type="button" :aria-label="row.title+' 삭제'" @click="open('remove',row)">삭제</button></div>
+            </li>
+          </ul>
+          <p v-if="!data.items.length" class="customer-car-empty">아직 남긴 문의가 없습니다.<br />문의 등록을 눌러 궁금한 내용을 남겨 주세요.</p>
+        </section>
+        <AdminAppFacilityRows v-else-if="appFacilityList" :items="facilityRows" />
+        <FacilityConfiguration v-else-if="underpassSplit&&(resourceId==='thresholds'||resourceId==='cameras')" :kind="resourceId as 'thresholds'|'cameras'" :facility-id="String(parents.underpassId)" :facility-name="splitUnderpassName" :rows="data.items" :total="data.totalItems" :can-write="!!canWrite" @action="(kind,row)=>open(kind,row)" />
         <ul v-else-if="managerNotificationList" class="manager-notification-cards" aria-label="관리자 알림 목록">
           <li v-for="row in data.items" :key="row.id" :class="{'is-unread':!row.read}">
-            <div class="manager-notification-meta"><span class="manager-notification-category">{{valueLabels[row.category]||'알림'}}</span><span v-if="!row.read" class="manager-notification-unread">● 안 읽음</span><time>{{display(row.createdAt)}}</time></div>
-            <h2>{{row.title}}</h2><p>{{row.body}}</p>
-            <button v-if="!row.read" type="button" :disabled="saving" @click="markManagerNotificationRead(row)">읽음 처리</button><small v-else class="manager-notification-read">✓ 읽음</small>
+            <div class="manager-notification-meta"><span class="manager-notification-category">{{valueLabels[row.category]||'알림'}}</span><span v-if="!appPage&&!row.read" class="manager-notification-unread">● 안 읽음</span><time>{{display(row.createdAt)}}</time></div>
+            <RouterLink :to="managerNotificationTarget(row)" custom v-slot="{href}"><a :href="href" class="manager-notification-content" @click="openManagerNotification($event,row)"><h2>{{row.title}}</h2><p>{{row.body}}</p></a></RouterLink>
+            <template v-if="!appPage"><button v-if="!row.read" type="button" :disabled="saving" @click="markManagerNotificationRead(row)">읽음 처리</button><small v-else class="manager-notification-read">✓ 읽음</small></template>
           </li>
           <li v-if="!data.items.length" class="manager-notification-empty">표시할 알림이 없습니다.</li>
         </ul>
@@ -1024,12 +1314,21 @@ defineExpose({ open, load })
           @edit="row=>open('edit',row)"
           @remove="row=>open('remove',row)"
         />
+        <ul v-else-if="publicNotices&&appPage" class="compact-notice-list" aria-label="공지사항 목록">
+          <li v-for="row in data.items" :key="row.id">
+            <button type="button" class="compact-notice-card" :class="{'notice-unread':noticeUnread(row)}" @click="open('detail',row)">
+              <span class="compact-notice-title"><span v-if="row.important" class="notice-important-badge">중요</span><strong :title="row.title">{{row.title}}</strong><span aria-hidden="true">›</span></span>
+              <span class="compact-notice-meta"><span>{{row.categoryLabel||boardCategoryLabel(row.category)||'안내'}}</span><time :datetime="row.createdAt">{{displayDate(row.createdAt,false)}}</time></span>
+            </button>
+          </li>
+          <li v-if="!data.items.length" class="compact-notice-empty">등록된 공지사항이 없습니다.</li>
+        </ul>
         <div v-else class="service-table-wrap">
           <table class="service-table">
             <thead>
               <tr>
-                <th v-for="[key,label] in visibleColumns" :key="key">{{label}}</th>
-                <th v-if="hasRowActions">상세·처리</th>
+                <th v-for="[key,label] in visibleColumns" :key="key" :data-field="key">{{label}}</th>
+                <th v-if="hasRowActions" class="resource-action-column">상세·처리</th>
               </tr>
             </thead>
             <tbody>
@@ -1038,8 +1337,10 @@ defineExpose({ open, load })
                 :key="row.id||index"
                 :class="{'notification-arrival-glow':notificationGlow.has(resourceId==='manager-notifications'?'notification':resourceId==='notices'?'notice':resourceId==='inquiries'?'inquiry':'',row.id)}"
               >
-                <td v-for="[key,label] in visibleColumns" :key="key" :data-label="label">
-                  <template v-if="resourceId==='notices'&&key==='title'">
+                <td v-for="[key,label] in visibleColumns" :key="key" :data-label="label" :data-field="key">
+                  <span v-if="resourceId==='presets'&&key==='category'||resourceId==='reasons'&&key==='type'" class="preset-category-badge" :data-category="row[key]">{{displayField(key,row[key])}}</span>
+                  <template v-else-if="resourceId==='presets'&&key==='content'">{{presetMessage(row)}}</template>
+                  <template v-else-if="resourceId==='notices'&&key==='title'">
                     <button
                       type="button"
                       class="notice-title-button"
@@ -1080,8 +1381,9 @@ defineExpose({ open, load })
                     {{key==='imagePath'?'이미지 없음':displayField(key,row[key])}}
                   </template>
                 </td>
-                <td v-if="hasRowActions">
+                <td v-if="hasRowActions" class="resource-action-column">
                   <div class="service-actions">
+                    <button v-if="resourceId==='transits'&&row.status==='REMAINING'&&canWrite" type="button" @click="remainingTransfer?.open(row)">소방 이관 PDF</button>
                     <button
                       v-if="resourceId==='cameras'&amp;&amp;row.streamUrl"
                       @click="open('video',row)"
@@ -1100,7 +1402,7 @@ defineExpose({ open, load })
                     <RouterLink
                       v-if="resourceId==='facilities'"
                       :to="'/admin-data/cameras?underpassId='+row.id"
-                    >카메라·입출구</RouterLink>
+                    >{{adminResourceTitles.cameras}}</RouterLink>
                   </div>
                 </td>
               </tr>
@@ -1110,13 +1412,17 @@ defineExpose({ open, load })
             </tbody>
           </table>
         </div>
-        <div class="service-pagination">
+        <!-- 지하차도별 화면은 한 페이지가 대부분이라, 표 아래 끝을 왼쪽 목록 끝과 맞추려고 한 페이지면 숨긴다 -->
+        <AppPagination v-if="appPage&&resourceId!=='cars'&&(resourceId!=='my-inquiries'||data.totalPages>1)" :page="page" :pages="data.totalPages" :disabled="loading" @change="navigatePage" />
+        <div v-else-if="resourceId!=='cars'&&(resourceId!=='my-inquiries'||data.totalPages>1)&&data.items.length&&(!underpassSplit||data.totalPages>1)" class="service-pagination">
           <button :disabled="page<=1" @click="navigatePage(page-1)">이전</button>
           <span>{{page}} / {{Math.max(1,data.totalPages)}} 페이지</span>
           <button :disabled="page>=data.totalPages" @click="navigatePage(page+1)">다음</button>
         </div>
       </template>
-      <dialog
+      </div>
+      </div>
+      <WorkflowPage
         ref="modal"
         class="service-modal"
         :class="{'service-app-modal':route.path.startsWith('/customer-app/')||route.path.startsWith('/admin-app/'),'restored-summary-drawer':restored&&mode==='detail'&&['facilities','customers'].includes(resourceId)}"
@@ -1129,7 +1435,7 @@ defineExpose({ open, load })
             <h2>
               {{mode==='video'?'카메라 영상':mode==='detail'?(restored&&detail.name?detail.name:'상세 보기'):mode==='create'?(resourceId==='my-inquiries'?'문의 등록':'새로 등록'):mode==='edit'?'정보 수정':mode==='remove'?'삭제 확인':action?.label}}
             </h2>
-            <button type="button" :disabled="saving" @click="modal?.close()">닫기</button>
+            <button type="button" :class="{'facility-drawer-close':facilityList&&mode==='detail'}" aria-label="닫기" :disabled="saving" @click="modal?.close()"><UiIcon v-if="facilityList&&mode==='detail'" name="close" /><span v-else>닫기</span></button>
           </header>
           <TrafficVideo v-if="mode==='video'" :src="selected?.streamUrl" :hls="true" />
           <img
@@ -1142,14 +1448,8 @@ defineExpose({ open, load })
             v-if="restored&&mode==='detail'&&resourceId==='facilities'"
             class="restored-summary-overview"
           >
-            <RiskLevelBadge :value="detail.currentRiskLevel" />
-            <strong>{{detail.riskScore??detail.currentRiskScore??'—'}}점</strong>
-            <span>{{detail.currentStatus==='BLOCKED'?'통제 중':'정상 운영'}}</span>
-            <div class="restored-risk-gauge">
-              <b
-                :style="{width:Math.max(0,Math.min(100,Number(detail.riskScore??detail.currentRiskScore)||0))+'%'}"
-              ></b>
-            </div>
+            <div class="facility-risk-score"><span>현재 위험 점수</span><strong>{{detail.riskScore??detail.currentRiskScore??'미수신'}}<small v-if="detail.riskScore!=null||detail.currentRiskScore!=null">점</small></strong></div>
+            <div class="facility-risk-state"><RiskLevelBadge :value="detail.currentRiskLevel" /><span>{{detail.currentStatus==='BLOCKED'?'통제 중':'정상 운영'}}</span></div>
           </div>
           <article v-if="mode==='detail'&&resourceId==='notices'" class="notice-detail">
             <div class="notice-detail-title">
@@ -1181,8 +1481,22 @@ defineExpose({ open, load })
             :record="detail"
             :image="imageUrl(detail.imagePath)"
           />
+          <div v-if="restored&&mode==='detail'&&resourceId==='facilities'" class="facility-summary-groups">
+            <section v-for="group in facilitySummaryGroups" :key="group.title" class="facility-summary-group" :data-section="group.title">
+              <h3>{{group.title}}</h3>
+              <dl>
+                <div v-for="[key,label,value] in group.fields" :key="key" :class="{'is-wide':key==='roadAddress'}">
+                  <dt>{{label}}</dt><dd>{{displayField(key,value)}}<small v-if="facilityFieldUnits[key]">{{facilityFieldUnits[key]}}</small></dd>
+                </div>
+              </dl>
+              <details v-if="group.title==='위치'&&(detail.latitude!=null||detail.longitude!=null)" class="facility-coordinates">
+                <summary class="text-button">좌표 정보</summary>
+                <dl><div v-if="detail.latitude!=null"><dt>위도</dt><dd>{{detail.latitude}}</dd></div><div v-if="detail.longitude!=null"><dt>경도</dt><dd>{{detail.longitude}}</dd></div></dl>
+              </details>
+            </section>
+          </div>
           <dl
-            v-if="mode==='detail'&&resourceId!=='notices'&&resourceId!=='ocr'"
+            v-else-if="mode==='detail'&&resourceId!=='notices'&&resourceId!=='ocr'"
             class="service-detail"
           >
             <template v-for="(label,key) in labels" :key="key">
@@ -1192,14 +1506,16 @@ defineExpose({ open, load })
               </template>
             </template>
           </dl>
-          <div v-if="mode==='detail'&&facilityList" class="service-actions">
-            <TunnelCctvDialog :facility-name="detail.name" />
+          <div v-if="mode==='detail'&&facilityList" class="facility-drawer-quick">
+            <TunnelCctvDialog :facility-name="detail.name" :underpass-id="detail.id" />
             <RouterLink :to="{path:route.path.startsWith('/admin-app/')?'/admin-app/screen-5':'/fac-detail',query:{id:String(detail.id),underpassId:String(detail.id),tab:'cctv'}}">시설 CCTV 보기</RouterLink>
           </div>
-          <div v-if="mode==='detail'&&canWrite" class="service-actions">
+          <component :is="facilityList?'details':'div'" v-if="mode==='detail'&&canWrite" :class="facilityList?'facility-drawer-more':'resource-body'">
+            <summary v-if="facilityList"><strong>추가 작업</strong><span>시설 관리·통제·이관</span></summary>
+            <div :class="facilityList?'facility-action-grid':'service-actions'">
             <button v-if="canEditRow(detail)" type="button" @click="open('edit',detail)">수정</button>
-            <button v-if="resource.remove" type="button" @click="open('remove',detail)">삭제</button>
-            <RouterLink v-if="facilityList" :to="'/admin-data/cameras?underpassId='+detail.id">카메라·입출구</RouterLink>
+            <button v-if="resource.remove" class="danger" type="button" @click="open('remove',detail)">삭제</button>
+            <RouterLink v-if="facilityList" :to="'/admin-data/cameras?underpassId='+detail.id">{{adminResourceTitles.cameras}}</RouterLink>
             <button
               v-for="act in resource.actions||[]"
               :key="act.label"
@@ -1209,8 +1525,10 @@ defineExpose({ open, load })
             >
               {{act.label}}
             </button>
-          </div>
+            </div>
+          </component>
           <template v-if="mode!=='detail'&amp;&amp;mode!=='video'">
+            <p v-if="resourceId==='facilities'&&mode==='action'&&/\/(block|release)$/.test(action?.path||'')" class="service-message">경찰과 소방의 통제 안내 기록을 함께 만듭니다. 잔류차량 전달서는 차량 확인 후 ‘잔류차량 소방 이관’에서 별도로 작성하세요.</p>
             <p v-if="mode==='remove'">선택한 항목을 삭제하시겠습니까?</p>
             <p v-else-if="mode==='action'&&!formFields.length">선택한 항목에 대해 {{action?.label}} 작업을 진행하시겠습니까?</p>
             <div v-if="resourceId==='customers'&amp;&amp;mode==='edit'" class="service-message">
@@ -1234,9 +1552,10 @@ defineExpose({ open, load })
             <button type="submit" :disabled="saving">{{saving?'처리 중…':'확인'}}</button>
           </footer>
         </form>
-      </dialog>
+      </WorkflowPage>
     </section>
     <p v-else role="alert">페이지를 찾을 수 없습니다.</p>
+    <RemainingVehicleTransfer v-if="resourceId==='transits'" ref="remainingTransfer" />
   </component>
 </template>
 
@@ -1251,3 +1570,41 @@ defineExpose({ open, load })
 <style scoped src="../styles/pages/backend-resource-5.css"></style>
 
 <style scoped src="../styles/pages/backend-resource-6.css"></style>
+<style scoped>
+.customer-car-guide{display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:16px;border-radius:10px;background:var(--r-selected);color:var(--r-ink);}
+.customer-car-guide>span{color:var(--r-accent);flex:none;--ui-icon-size:20px;}
+.customer-car-guide p{margin:0;font-size:13px;line-height:22px;word-break:keep-all;}
+.customer-car-guide small{font-size:12px;color:var(--r-muted);}
+.customer-car-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px;padding:0;margin:0;list-style:none;}
+.customer-car-list>li{padding:18px 16px;border:1px solid var(--r-line);border-radius:12px;background:var(--r-surface);}
+.customer-car-identity{display:flex;align-items:center;gap:14px;margin-bottom:18px;}
+.customer-car-symbol{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:var(--r-soft);color:var(--r-accent);flex:none;}
+.customer-car-symbol svg{width:26px;height:26px;}
+.customer-car-identity small{display:block;margin-bottom:4px;color:var(--r-muted);font-size:11px;}
+.customer-car-identity strong{display:block;color:var(--r-ink);font-size:21px;line-height:28px;font-weight:650;letter-spacing:.02em;}
+.customer-car-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.customer-car-footer time{font-size:12px;color:var(--r-muted);}
+.customer-car-footer>div{display:flex;gap:6px;}
+.customer-car-footer button{min-height:36px;padding:6px 10px;border:1px solid var(--r-line);border-radius:8px;background:var(--r-surface);color:var(--r-ink);font-size:12px;}
+.customer-car-footer button.customer-car-delete{color:var(--status-danger-ink,#a32446);}
+.customer-car-empty{text-align:center;padding:24px 12px;font-size:13px;line-height:24px;color:var(--r-muted);}
+.customer-inquiry-guide{display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:16px;border-radius:12px;background:var(--r-selected);color:var(--r-ink);}
+.customer-inquiry-guide>.ui-icon{flex:none;color:var(--r-accent);width:24px;height:24px;}
+.customer-inquiry-guide strong{font-size:14px;line-height:22px;}
+.customer-inquiry-guide p{margin:4px 0 0;font-size:12px;line-height:20px;color:var(--r-muted);word-break:keep-all;}
+.customer-inquiry-list{display:grid;gap:12px;list-style:none;padding:0;margin:0;}
+.customer-inquiry-list>li{border:1px solid var(--r-line);border-radius:12px;background:var(--r-surface);overflow:hidden;}
+.customer-inquiry-open{display:block;width:100%;padding:18px 16px;border:0;border-radius:0;background:transparent;color:var(--r-ink);text-align:left;font:inherit;cursor:pointer;}
+.customer-inquiry-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;}
+.customer-inquiry-meta time{font-size:12px;color:var(--r-muted);}
+.customer-inquiry-status{padding:3px 8px;border-radius:5px;background:var(--status-caution-bg,#fff1d6);color:var(--status-caution-ink,#965000);font-size:12px;line-height:18px;}
+.customer-inquiry-status.is-done{background:var(--status-safe-bg,#e1f3ea);color:var(--status-safe-ink,#1b7f5c);}
+.customer-inquiry-title{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.customer-inquiry-title strong{font-size:17px;line-height:26px;font-weight:650;overflow-wrap:anywhere;}
+.customer-inquiry-title>.ui-icon{width:18px;height:18px;flex:none;color:var(--r-muted);}
+.customer-inquiry-open p{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin:8px 0 0;font-size:13px;line-height:22px;color:var(--r-muted);}
+.customer-inquiry-open>small{display:block;margin-top:12px;font-size:12px;color:var(--r-accent);}
+.customer-inquiry-actions{display:flex;justify-content:flex-end;gap:8px;padding:0 16px 14px;}
+.customer-inquiry-actions button{min-height:34px;padding:5px 12px;border:1px solid var(--r-line);border-radius:8px;background:var(--r-surface);color:var(--r-muted);font-size:12px;}
+.customer-inquiry-open:focus-visible{outline:2px solid var(--r-accent);outline-offset:-3px;}
+</style>

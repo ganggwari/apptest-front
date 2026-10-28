@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { disableFcm } from '../services/fcmPush'
 import NotificationBell from './NotificationBell.vue'
+import { detachPushToken } from '../services/devicePush'
 import DemoRainButton from './DemoRainButton.vue'
 import AdminSidebarLinks from '../components/AdminSidebarLinks.vue'
 import '../styles/fac-list.css'
@@ -69,7 +69,7 @@ async function navigateMenu(event: MouseEvent) {
 }
 async function logout() {
   try {
-    if (app.account?.role === 'REGIONAL_ADMIN') await disableFcm('REGIONAL_ADMIN').catch(() => {})
+    try { await detachPushToken() } catch { /* Token cleanup must not prevent sign-out. */ }
     await backend('/api/auth/logout', { method: 'POST' })
     app.clearAccount()
     await router.push(mobile.value ? '/admin-app/screen-1' : '/admin-login')

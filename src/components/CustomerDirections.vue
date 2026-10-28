@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import NotificationBell from './NotificationBell.vue'
+import { matchesKoreanSearch } from '../utils/korean-search'
+import { useBackendEvents } from '../composables/useBackendEvents'
+import CustomerMobileHeader from './CustomerMobileHeader.vue'
 import { pageFriendlyMapScroll } from '../runtime/mapScroll'
 let disposeMapScroll: (() => void) | undefined
 
@@ -18,16 +20,17 @@ import {
   type Route,
   type Point,
   type Guide,
-  type HazardRoute,
-  toRoute,
+  type SafetyRoute,
+  safetyRouteCandidate,
+  passesAvoidPoint,
 } from '../services/navigation'
 import { projectRoute, distanceMeters, formatDistance, routeTimeline } from '../utils/navigation-progress'
 import '../styles/customer-app-7.css'
 import '../styles/customer-directions.css'
 const store = useApp(),
   mapHost = ref<HTMLElement>(),
-  originText = ref('부산역'),
-  destinationText = ref('서면역'),
+  originText = ref('부산 동구청'),
+  destinationText = ref('부산 오페라하우스'),
   origin = ref<Place | null>(null),
   destination = ref<Place | null>(null),
   choices = ref<Place[]>([]),
@@ -37,6 +40,34 @@ const routes = ref<Route[]>([]),
   busy = ref(false),
   error = ref(''),
   mapError = ref('')
+const safety = ref<SafetyRoute|null>(null), safetyDialog = ref<HTMLDialogElement>()
+const safetyUnavailable = computed(()=>!!safety.value?.mandatory&&!safety.value.detoured)
+const rerouting=ref(false)
+const demoIncident=ref(false)
+const demoStartPending=ref(false)
+let hazardTimer: ReturnType<typeof setTimeout>|undefined, prioritySpeechUntil = 0
+function announce(message:string) {
+  if (!speechSupported||!voice.value) return
+  prioritySpeechUntil=Date.now()+4000
+  speechSynthesis.cancel()
+  const utterance=new SpeechSynthesisUtterance(message);utterance.lang='ko-KR';speechSynthesis.speak(utterance)
+}
+async function showSafety() { await nextTick(); if(alive&&!safetyDialog.value?.open)safetyDialog.value?.showModal() }
+function acceptDetour() {
+  const running=requested.value||demoStartPending.value
+  if(safety.value?.suggestedDetour)chooseRoute(1)
+  safetyDialog.value?.close()
+  if(running&&!safetyUnavailable.value)startNavigation()
+  demoStartPending.value=false
+  announce('우회 경로로 안내합니다.')
+}
+function startSafeDetour(){
+  if(!safety.value?.detoured||safetyUnavailable.value||!active.value)return
+  safetyDialog.value?.close()
+  startNavigation()
+  demoStartPending.value=false
+  announce('통제 구간을 피해 우회 경로로 안내합니다.')
+}
 type Weather = {
   temperature: number | null
   humidity: number | null
@@ -52,34 +83,6 @@ const weather = ref<Weather | null>(null),
   infoLoading = ref(false),
   camera = ref<Camera | null>(null),
   videoError = ref(false)
-// 이전 테스트 앱의 시연 경로 프리셋 (좌표는 원본 그대로 유지)
-const DEMO_TRIPS: { label: string; from: Place; to: Place }[] = [
-  { label: '초량지하차도 경로', from: { name: '시연 출발(초량 북쪽)', lat: 35.1291, lng: 129.0452 }, to: { name: '시연 도착(초량 남쪽)', lat: 35.1091, lng: 129.0444 } },
-  { label: '북항지하차도 경로', from: { name: '시연 출발(북항 북쪽)', lat: 35.1331, lng: 129.0475 }, to: { name: '시연 도착(북항 남쪽)', lat: 35.1131, lng: 129.0467 } },
-  { label: '충장지하차도 경로', from: { name: '시연 출발(범일동)', lat: 35.138, lng: 129.064 }, to: { name: '시연 도착(남포동 방면)', lat: 35.104, lng: 129.038 } },
-]
-const hazardNote = ref<{ kind: 'blocked' | 'advisory' | 'info'; text: string } | null>(null)
-let hazardVersion: number | null = null
-let hazardPoll: number | undefined
-let rerouting = false
-const rerouteAlert = ref('')
-let rerouteAlertTimeout: number | undefined
-let priorityVoiceUntil = 0
-function showRerouteAlert(message: string, speak = false) {
-  rerouteAlert.value = message
-  if (rerouteAlertTimeout !== undefined) window.clearTimeout(rerouteAlertTimeout)
-  rerouteAlertTimeout = window.setTimeout(() => { rerouteAlert.value = '' }, 12000)
-  if (speak && speechSupported) {
-    // 차단 경고는 일반 턴 안내보다 우선하며, 음성 안내 토글과 독립적으로 1회 알립니다.
-    priorityVoiceUntil = Date.now() + 9000
-    speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(message)
-    utterance.lang = 'ko-KR'
-    utterance.rate = 0.95
-    speechSynthesis.speak(utterance)
-  }
-}
-
 const active = computed(() => routes.value[selected.value]),
   guides = computed(() => active.value?.sections.flatMap((section) => section.guides || []) || [])
 let sdk: any,
@@ -183,7 +186,11 @@ async function loadInfo(place: Place, signal: AbortSignal) {
   infoLoading.value = false
 }
 async function search() {
+  demoStartPending.value=false
+  demoIncident.value=false
   stopNavigation()
+  safety.value=null
+  safetyDialog.value?.close()
   position.value = null
   controller?.abort()
   const current = new AbortController()
@@ -202,37 +209,16 @@ async function search() {
       resolvePlace('destination', current.signal),
     ])
     void loadInfo(to, current.signal)
-    const candidates = await navigationRequest<Route[]>(
-      'directions',
-      { origin: coord(from), destination: coord(to) },
-      current.signal,
-    )
-    hazardNote.value = null
-    // /directions는 위험을 고려하지 않으므로 Spring /route 결과를 우선 반영한다.
-    // 서버가 인증/경로 탐색에 실패한 경우만 기본 경로를 유지한다.
-    try {
-      const hz = await navigationRequest<HazardRoute>(
-        'route', { origin: coord(from), destination: coord(to) }, current.signal,
-      )
-      if (hz.passesHazards?.length || hz.detoured) {
-        candidates.splice(0, candidates.length,
-          toRoute(hz, hz.detoured ? '위험 우회 경로' : '기본 경로'))
-        if (hz.suggestedDetour) {
-          candidates.push(toRoute(hz.suggestedDetour,
-            `선택 우회 (+${Math.ceil(hz.suggestedDetour.extraSec / 60)}분)`))
-        }
-        hazardNote.value = {
-          kind: hz.mandatory ? 'blocked' : 'advisory',
-          text: hz.message || (hz.mandatory
-            ? '위험 지하차도가 차단되어 우회 경로를 적용했습니다.'
-            : '위험 지하차도가 포함되어 있습니다. 아래에서 우회 경로를 선택할 수 있습니다.'),
-        }
-      }
-    } catch (e) {
-      if (current.signal.aborted) throw e
-      // 우회 API 실패 시 기본 길찾기를 제공하되 사용자에게 안전상 한계를 명확히 표시한다.
-      hazardNote.value = { kind: 'info', text: '위험 구간 확인에 실패했습니다. 표시된 경로는 위험 우회가 검증되지 않았습니다.' }
-    }
+    let candidates:Route[]
+    if (store.account) {
+      const assessed=await navigationRequest<SafetyRoute>('route',{origin:coord(from),destination:coord(to)},current.signal)
+      if(!alive||current.signal.aborted)return
+      safety.value=assessed
+      if(assessed.mandatory&&!assessed.detoured){void showSafety();throw Error(assessed.message||'통제 지하차도를 피하는 경로를 찾지 못했습니다.')}
+      candidates=[safetyRouteCandidate(assessed)]
+      if(assessed.suggestedDetour)candidates.push(safetyRouteCandidate(assessed.suggestedDetour))
+      if(assessed.mandatory||assessed.advisoryHazards?.length)void showSafety()
+    } else candidates=await navigationRequest<Route[]>('directions',{origin:coord(from),destination:coord(to)},current.signal)
     if (!candidates.length) throw Error('이 구간에서 자동차 경로를 찾지 못했습니다.')
     if (!alive || current.signal.aborted) return
     routes.value = candidates
@@ -384,7 +370,7 @@ const arrivalTime = computed(() =>
   }),
 )
 const filteredCameras = computed(() =>
-  cameras.value.filter((item) => item.name.includes(cameraQuery.value.trim())),
+  cameras.value.filter((item) => matchesKoreanSearch(item.name,cameraQuery.value)),
 )
 const turnIcon = computed(() =>
   /좌회전|왼쪽/.test(currentGuide.value?.guidance || '')
@@ -436,10 +422,77 @@ function toggleDemoPause() {
   } else demoFrame = requestAnimationFrame(demoTick)
 }
 function changeDrivingMode() {
+  const running = requested.value
   stopNavigation()
   position.value = null
   demoMeters.value = 0
   gpsError.value = ''
+  if (running) startNavigation()
+  else draw()
+}
+function previewRoute() {
+  drivingMode.value = 'demo'
+  startNavigation()
+}
+// 시연용 고정 경로(초량·북항·충장 지하차도를 지나는 출발/도착). 버튼 한 번으로 출발지·도착지를 넣고 시연 주행을 시작한다.
+const DEMO_TRIPS: { label: string; from: Place; to: Place }[] = [
+  { label: '초량지하차도 경로', from: { name: '시연 출발(초량 북쪽)', lat: 35.1291, lng: 129.0452 }, to: { name: '시연 도착(초량 남쪽)', lat: 35.1091, lng: 129.0444 } },
+  { label: '북항지하차도 경로', from: { name: '시연 출발(북항 북쪽)', lat: 35.1331, lng: 129.0475 }, to: { name: '시연 도착(북항 남쪽)', lat: 35.1131, lng: 129.0467 } },
+  { label: '충장지하차도 경로', from: { name: '시연 출발(범일동)', lat: 35.138, lng: 129.064 }, to: { name: '시연 도착(남포동 방면)', lat: 35.104, lng: 129.038 } },
+]
+async function useDemoTrip(i: number) {
+  if (busy.value) return
+  const t = DEMO_TRIPS[i]!
+  origin.value = t.from
+  originText.value = t.from.name
+  destination.value = t.to
+  destinationText.value = t.to.name
+  await startDemoTrip()
+}
+async function startDemoTrip() {
+  if(busy.value)return
+  drivingMode.value='demo'
+  await search()
+  demoStartPending.value=!!active.value
+  if(active.value&&!safetyUnavailable.value&&!safetyDialog.value?.open){startNavigation();demoStartPending.value=false}
+}
+async function simulateClosure() {
+  if(drivingMode.value!=='demo'||!requested.value||!position.value||!destination.value||busy.value)return
+  const from={...position.value},to=destination.value
+  const remaining=timeline.value.total-demoMeters.value
+  if(remaining<300){gpsError.value='목적지에 가까워 통제 시연을 시작할 수 없어요. 시연을 다시 시작한 뒤 눌러 주세요.';return}
+  const ahead=timeline.value.positionAt(demoMeters.value+Math.min(700,remaining/2))
+  if(!ahead)return
+  const wasPaused=demoPaused.value
+  if(!demoPaused.value)toggleDemoPause()
+  busy.value=true;error.value='';gpsError.value=''
+  announce('시연 상황입니다. 전방 통제로 우회 경로를 찾습니다.')
+  try {
+    let candidate:Route|undefined
+    const dx=ahead.lng-from.lng,dy=ahead.lat-from.lat,length=Math.hypot(dx,dy)||1
+    for(const [north,east] of [[dx/length*.004,-dy/length*.004],[-dx/length*.004,dy/length*.004],[.008,0],[-.008,0],[0,.008],[0,-.008]]) {
+      const waypoint={lat:ahead.lat+north!,lng:ahead.lng+east!}
+      let options:Route[]
+      try { options=await navigationRequest<Route[]>('directions',{origin:coord(from),destination:coord(to),waypoint:coord(waypoint)}) }
+      catch {continue}
+      if(!alive||drivingMode.value!=='demo')return
+      candidate=options.find(row=>routePoints(row).length>1&&!passesAvoidPoint(row,ahead,60))
+      if(candidate)break
+    }
+    if(!candidate)throw Error('이 위치에서는 시연 우회 경로를 찾지 못했어요. 기존 시연을 계속하며 잠시 뒤 다시 시도해 주세요.')
+    stopNavigation()
+    origin.value={...from,name:'시연 현재 위치'}
+    originText.value=origin.value.name
+    position.value=null
+    routes.value=[candidate];selected.value=0
+    demoIncident.value=true
+    safety.value={distance:candidate.summary.distance,duration:candidate.summary.duration,path:routePoints(candidate).map(p=>[p.lat,p.lng]),guides:[],mandatory:true,detoured:true,blockedHazards:['전방 시연 구간'],advisoryHazards:[],passesHazards:[],message:'주행 중 통제가 발생한 시연 상황입니다. 실제 시설 통제에는 영향을 주지 않습니다.'}
+    await nextTick();draw();void showSafety()
+  } catch(e) {
+    gpsError.value=(e as Error).message
+    if(!wasPaused&&requested.value&&demoPaused.value)toggleDemoPause()
+  }
+  finally {busy.value=false}
 }
 function followPosition() {
   if (!map || !position.value) return
@@ -455,17 +508,27 @@ function followPosition() {
     else userOverlay.setPosition(point)
   }
   if (following.value) {
-    if (drivingMode.value === 'demo') {
-      // 시연은 매 프레임 갱신되므로 panTo 애니메이션을 반복 시작하지 않습니다.
-      map.setCenter(point)
-    } else {
-      map.setLevel(3)
-      map.panTo(point)
+    if (drivingMode.value === 'gps') map.setLevel(3)
+    map.setCenter(point)
+    // Keep the moving dot in the visible space between the guidance and bottom sheet.
+    const host = mapHost.value?.getBoundingClientRect()
+    const body = mapHost.value?.closest('.navigation-body')
+    const guidance = body?.querySelector('.navigation-guidance')?.getBoundingClientRect()
+    const summary = body?.querySelector('.navigation-summary')?.getBoundingClientRect()
+    const projection = map.getProjection?.()
+    if (host && projection?.coordsFromContainerPoint && sdk.maps.Point) {
+      const top = Math.max(host.top, guidance?.bottom ?? host.top) + 20
+      const bottom = Math.min(host.bottom, summary?.top ?? host.bottom) - 20
+      if (bottom > top) {
+        const targetY = (top + bottom) / 2 - host.top
+        const center = projection.coordsFromContainerPoint(new sdk.maps.Point(host.width / 2, host.height - targetY))
+        map.setCenter(center)
+      }
     }
   }
 }
 function startNavigation() {
-  if (!active.value || routePath.value.length < 2) return
+  if (!active.value || routePath.value.length < 2 || safetyUnavailable.value) return
   stopNavigation()
   gpsError.value = ''
   position.value = null
@@ -490,7 +553,7 @@ function startNavigation() {
   requested.value = true
   watchId = navigator.geolocation.watchPosition(
     (fix) => {
-      if (!alive || !requested.value) return
+      if (!alive || !requested.value || drivingMode.value !== 'gps') return
       position.value = {
         lat: fix.coords.latitude,
         lng: fix.coords.longitude,
@@ -538,86 +601,20 @@ function editRoute() {
   editing.value = true
   searchExpanded.value = true
 }
-// SSE와 폴링을 병행해 주행 중 위험 단계 변경을 놓치지 않도록 한다.
-async function syncHazardVersion() {
-  try {
-    const state = await navigationRequest<{ version: number }>('hazards', {})
-    hazardVersion = state.version
-  } catch { /* 일시적인 API 오류는 다음 검사에서 재시도 */ }
-}
-async function checkHazards() {
-  if (!alive || rerouting || busy.value) return
-  try {
-    const state = await navigationRequest<{ version: number }>('hazards', {})
-    if (hazardVersion === null) { hazardVersion = state.version; return }
-    if (state.version === hazardVersion) return
-    hazardVersion = state.version
-    if (requested.value && position.value) await autoReroute()
-    else if (routes.value.length && origin.value && destination.value) void search()
-  } catch { /* 연결 복구 후 다시 검사 */ }
-}
-async function autoReroute() {
-  if (!position.value || !destination.value || rerouting) return
-  rerouting = true
-  const here = { ...position.value }
-  const wasDemo = drivingMode.value === 'demo'
-  const paused = demoPaused.value
-  const oldRoute = active.value
-  const oldOrigin = origin.value
-  const oldOriginText = originText.value
-  const oldPosition = position.value
-  try {
-    origin.value = { name: '현재 시연 위치', lat: here.lat, lng: here.lng }
-    originText.value = origin.value.name
-    await search()
-    if (routes.value.length) {
-      const safety = hazardNote.value
-      const blocked = safety?.kind === 'blocked'
-      const warning = blocked
-        ? '전방 지하차도가 차단되었습니다. 안전한 우회 경로로 변경합니다.'
-        : safety?.kind === 'advisory'
-          ? '전방 지하차도 위험도가 변경되었습니다. 경로를 다시 안내합니다.'
-          : safety?.text?.includes('확인에 실패')
-            ? '위험 정보를 확인하지 못했습니다. 경로의 안전을 보장할 수 없습니다.'
-            : '주변 위험 정보가 변경되어 경로를 다시 탐색했습니다.'
-      hazardNote.value = { kind: blocked ? 'blocked' : safety?.kind === 'advisory' ? 'advisory' : 'info', text: `${warning} ${safety?.text || ''}` }
-      startNavigation()
-      if (wasDemo && paused) toggleDemoPause()
-      showRerouteAlert(warning, blocked)
-    } else {
-      // 자동 재탐색 실패로 안내 화면이 비지 않도록 이전 경로를 복원한다.
-      if (oldRoute) routes.value = [oldRoute]
-      origin.value = oldOrigin
-      originText.value = oldOriginText
-      position.value = oldPosition
-      hazardNote.value = { kind: 'info', text: '재탐색에 실패했습니다. 안전 여부가 확인될 때까지 주행하지 마세요.' }
-      showRerouteAlert('우회 경로를 찾지 못했습니다. 안전 여부를 확인하세요.', true)
-      await nextTick()
-      draw()
-    }
-  } finally { rerouting = false }
-}
-function useDemoTrip(index: number) {
-  const trip = DEMO_TRIPS[index]
-  if (!trip) return
-  drivingMode.value = 'demo'
-  origin.value = { ...trip.from }
-  destination.value = { ...trip.to }
-  originText.value = trip.from.name
-  destinationText.value = trip.to.name
-  void search()
-}
-function onNavigationBackendEvent(event: Event) {
-  const name = (event as CustomEvent<{ name?: string }>).detail?.name
-  if (name === 'risk-level-change' || name === 'control-change' || name === 'data-changed') void checkHazards()
-}
-
-function reroute() {
+async function reroute() {
+  if(rerouting.value)return
+  rerouting.value=true
+  const running=requested.value
   if (position.value) {
     origin.value = { name: '내 위치', lat: position.value.lat, lng: position.value.lng }
     originText.value = '내 위치'
   }
-  void search()
+  try {
+    const pending=search()
+    announce('위험 정보를 반영해 경로를 재탐색합니다.')
+    await pending
+    if(running&&active.value&&!safetyUnavailable.value){startNavigation();announce('경로를 재탐색했습니다. 새 경로로 안내합니다.')}
+  } finally {rerouting.value=false}
 }
 function openCameras() {
   camera.value = null
@@ -643,9 +640,9 @@ watch([guideIndex, navigating, voice], () => {
     demoPaused.value ||
     !voice.value ||
     !speechSupported ||
-    Date.now() < priorityVoiceUntil ||
     !currentGuide.value ||
     offRoute.value
+    || Date.now()<prioritySpeechUntil
   )
     return
   speechSynthesis.cancel()
@@ -658,17 +655,22 @@ watch([guideIndex, navigating, voice], () => {
 watch(voice, (enabled) => {
   if (!enabled && speechSupported) speechSynthesis.cancel()
 })
+useBackendEvents(({name,data})=>{
+  if(!store.account||!active.value)return
+  if(name!=='connected'&&name!=='control-change'&&!(name==='data-changed'&&data.resource==='navigation-hazard'))return
+  clearTimeout(hazardTimer)
+  hazardTimer=setTimeout(()=>{if(alive&&!busy.value)void reroute()},400)
+})
+watch(offRoute,(outside)=>{if(outside&&requested.value)announce('경로를 벗어났습니다. 경로 다시 찾기를 눌러 재탐색해 주세요.')})
 onBeforeUnmount(() => {
+  clearTimeout(hazardTimer)
+  safetyDialog.value?.close()
   stopNavigation()
-  if (rerouteAlertTimeout !== undefined) window.clearTimeout(rerouteAlertTimeout)
   guideDialog.value?.close()
   cameraDialog.value?.close()
   infoDialog.value?.close()
 })
 onMounted(async () => {
-  window.addEventListener('routel-backend-event', onNavigationBackendEvent)
-  hazardPoll = window.setInterval(() => void checkHazards(), 4000)
-  void syncHazardVersion()
   try {
     sdk = await loadKakao()
     if (!alive || !mapHost.value) return
@@ -682,11 +684,15 @@ onMounted(async () => {
       map.setCursor('grabbing')
       if (requested.value) following.value = false
     })
-    listen('dragend', () => map.setCursor('grab'))
+    listen('dragend', () => {
+      map.setCursor('grab')
+      if (requested.value) { following.value = true; followPosition() }
+    })
     resize = new ResizeObserver(() => {
       const center = map.getCenter()
       map.relayout()
       map.setCenter(center)
+      if (requested.value) followPosition()
     })
     resize.observe(mapHost.value)
     draw()
@@ -695,8 +701,6 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('routel-backend-event', onNavigationBackendEvent)
-  if (hazardPoll !== undefined) window.clearInterval(hazardPoll)
   disposeMapScroll?.()
   alive = false
   controller?.abort()
@@ -708,18 +712,8 @@ onBeforeUnmount(() => {
 <template>
   <div class="wire-page mobile-page page-customer-app-7 navigation-page"
     ><div class="ph"
-      ><header class="ah"
-        ><span>길찾기</span
-        ><NotificationBell /><button
-          type="button"
-          class="ui-icon-button theme-toggle"
-          aria-label="라이트·다크 전환"
-          @click="store.themeToggle()"
-          >
-          <UiIcon name="theme" />
-        </button
-        ></header
-      ><main class="bd directions-body navigation-body">
+      ><CustomerMobileHeader title="길찾기" />
+      <main class="bd directions-body navigation-body">
         <div class="directions-map-wrap"
           ><div ref="mapHost" class="directions-map" aria-label="카카오 자동차 길찾기 지도"></div
           ><div class="directions-map-zoom"
@@ -745,19 +739,14 @@ onBeforeUnmount(() => {
 <section v-if="editing" class="navigation-search" aria-label="경로 검색"
           ><div class="navigation-search-title"
               ><button type="button" class="navigation-search-toggle" :aria-expanded="searchExpanded" aria-controls="navigation-search-fields" @click="searchExpanded=!searchExpanded">
-                <strong>어디로 갈까요?</strong><span aria-hidden="true">{{searchExpanded?'⌃':'⌄'}}</span>
+                <strong>어디로 갈까요?</strong><svg class="navigation-search-chevron" :class="{'is-expanded':searchExpanded}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
-              ><button class="ui-icon-button" v-if="active" type="button" aria-label="검색창 닫기" @click="editing=false"
+              <button class="ui-icon-button" v-if="active" type="button" aria-label="검색창 닫기" @click="editing=false"
                 >
           <UiIcon name="close" />
         </button
               ></div
           ><div id="navigation-search-fields" v-show="searchExpanded">
-          <div class="navigation-demo-presets" aria-label="시연 경로 선택">
-            <strong>시연 경로 바로 선택</strong>
-            <div><button v-for="(trip, index) in DEMO_TRIPS" :key="trip.label"
-              type="button" :disabled="busy" @click="useDemoTrip(index)">{{trip.label}}</button></div>
-          </div>
           <form class="directions-form" @submit.prevent="search"
             ><label
               >출발지<div
@@ -782,7 +771,12 @@ onBeforeUnmount(() => {
                   >검색</button
                 ></div
               ></label
-            ><button class="btn p" :disabled="busy">{{busy?'경로 조회 중…':'길찾기'}}</button></form
+            ><button class="btn p" :disabled="busy">{{busy?'경로 조회 중…':'길찾기'}}</button><button type="button" class="btn navigation-demo-start" :disabled="busy" @click="startDemoTrip">시연 바로 시작</button
+            ><div class="navigation-demo-box"
+              ><b>시연용</b
+              ><button v-for="(t,i) in DEMO_TRIPS" :key="t.label" type="button" :disabled="busy" @click="useDemoTrip(i)">{{t.label}}</button
+              ></div
+            ></form
           ><ul v-if="choices.length" class="directions-place-results"
             ><li v-for="place in choices" :key="place.id"
               ><button @click="pickPlace(place)"
@@ -816,20 +810,16 @@ onBeforeUnmount(() => {
             ></div
           ></section
         >
-<div v-if="rerouteAlert" class="navigation-reroute-alert" role="alert" aria-live="assertive">
-  <span aria-hidden="true">⚠️</span><strong>{{ rerouteAlert }}</strong>
-  <button type="button" @click="rerouteAlert = ''" aria-label="경고 닫기">×</button>
-</div>
-<p v-if="hazardNote" class="navigation-hazard-note" :data-kind="hazardNote.kind" role="status">{{hazardNote.text}}</p>
+<p v-if="rerouting" class="navigation-reroute-notice" role="status"><UiIcon name="refresh" />통제·위험 정보를 반영해 경로를 다시 찾고 있어요.</p>
 <p v-if="mapError" class="navigation-map-error" role="status">{{mapError}}</p
         ><p v-if="gpsError" class="navigation-gps-error" role="alert">{{gpsError}}</p>
 <section ref="summaryElement" v-if="active" class="navigation-summary directions-results" :class="{'summary-collapsed':!summaryExpanded}" aria-label="경로 결과"
           @pointerdown="startSummarySwipe" @pointerup="endSummarySwipe" @pointercancel="summaryPointer=undefined"
           ><button type="button" class="navigation-summary-handle" :aria-expanded="summaryExpanded" aria-label="주행 패널 접기·펼치기" @click="toggleSummary">
             <span aria-hidden="true"></span><small>{{summaryExpanded?'아래로 밀어 접기':'위로 밀어 펼치기'}}</small>
-          </button><div class="navigation-demo-controls">
+          </button><div v-if="safety?.mandatory&&safety.detoured" class="navigation-detour-banner"><UiIcon name="route" /><div><strong>통제 구간을 피한 우회 경로</strong><small v-if="safety.blockedHazards?.length">{{safety.blockedHazards.join(' · ')}}</small></div><button type="button" @click="showSafety">안내 보기</button></div><div class="navigation-demo-controls">
             <label>주행 방식
-              <select v-model="drivingMode" :disabled="requested" @change="changeDrivingMode">
+              <select v-model="drivingMode" @change="changeDrivingMode">
                 <option value="gps">실제 GPS 안내</option>
                 <option value="demo">시연 주행</option>
               </select>
@@ -840,7 +830,9 @@ onBeforeUnmount(() => {
                   <option v-for="speed in [1,2,4,8,16]" :key="speed" :value="speed">{{speed}}배속</option>
                 </select>
               </label>
-              <button v-if="requested" type="button" @click="toggleDemoPause">{{demoPaused?'시연 재개':'일시정지'}}</button>
+              <div v-if="requested" class="navigation-demo-actions"><button type="button" @click="toggleDemoPause">{{demoPaused?'시연 재개':'일시정지'}}</button>
+              <button type="button" :disabled="busy" @click="simulateClosure">{{busy?'우회 경로 조회 중…':'주행 중 통제 발생'}}</button></div>
+              <small v-if="demoIncident">통제 상황 시연 · 실제 시설 상태 유지</small>
               <small>가상 위치 · 1배속 기준 시속 50km</small>
             </template>
           </div><div v-if="!requested&&!arrived" class="navigation-route-options"
@@ -850,7 +842,7 @@ onBeforeUnmount(() => {
               type="button"
               :aria-pressed="selected===index"
               @click="chooseRoute(index)"
-              ><b>{{route.label || (index===0?'추천':'대안')}} {{Math.ceil(route.summary.duration/60)}}분</b
+              ><b>{{index===0?'추천':'대안'}} {{Math.ceil(route.summary.duration/60)}}분</b
               ><span
                 >{{formatDistance(route.summary.distance)}} · 통행료 {{route.summary.fare?.toll?.toLocaleString()??'—'}}원</span
               ></button
@@ -875,17 +867,17 @@ onBeforeUnmount(() => {
               :aria-pressed="voice"
               @click="voice=!voice"
               >음성 안내 {{voice?'켜짐':'꺼짐'}}</button
-            ><button v-if="offRoute" type="button" @click="reroute">경로 다시 찾기</button></div
+            ><button v-if="offRoute" type="button" @click="reroute">경로 다시 찾기</button><button v-if="offRoute&&drivingMode==='gps'" type="button" @click="previewRoute">시연으로 경로 확인</button></div
           ><nav class="navigation-quick-actions" aria-label="경로 상세 메뉴"
             ><button type="button" @click="guideDialog?.showModal()"
               >구간 안내 <small>{{guides.length}}</small></button
             ><button type="button" @click="openCameras"
               >주변 CCTV <small>{{cameras.length}}</small></button
             ><button type="button" @click="infoDialog?.showModal()">도착지 날씨</button></nav
-          ><p class="directions-source">카카오모빌리티 · 조회 시점 기준 예상 소요 시간</p></section
+          ></section
         > </main
       ><CustomerAppNav />
-<dialog ref="guideDialog" class="navigation-detail-dialog" aria-labelledby="route-guide-title"
+<WorkflowPage ref="guideDialog" class="navigation-detail-dialog" aria-labelledby="route-guide-title"
         ><header
           ><div
             ><small>{{origin?.name}} → {{destination?.name}}</small
@@ -913,9 +905,9 @@ onBeforeUnmount(() => {
               ></li
             ></ol
           ><p v-if="!guides.length">제공된 구간 안내가 없습니다.</p></div
-        ></dialog
+        ></WorkflowPage
       >
-<dialog
+<WorkflowPage
         ref="cameraDialog"
         class="navigation-detail-dialog"
         :class="{'navigation-video-dialog':camera!==null}"
@@ -964,9 +956,9 @@ onBeforeUnmount(() => {
               >영상 주소 열기 ↗</a
             ></section
           ></div
-        ></dialog
+        ></WorkflowPage
       >
-<dialog
+<WorkflowPage
         ref="infoDialog"
         class="navigation-detail-dialog navigation-weather-dialog"
         aria-labelledby="route-weather-title"
@@ -989,8 +981,50 @@ onBeforeUnmount(() => {
             ><span>습도 {{weather.humidity??'—'}}% · 강우량 {{weather.rainfall??'—'}} mm</span
             ><small>기상청 · {{new Date(weather.observedAt).toLocaleString('ko-KR')}}</small></div
           ></div
-        ></dialog
+        ></WorkflowPage
       >
+    <Teleport to="body"><dialog ref="safetyDialog" class="navigation-safety-dialog" :data-blocked="safety?.mandatory" aria-labelledby="navigation-safety-title">
+      <template v-if="safety">
+        <header><span>{{safety.mandatory?'통제 지하차도 안내':'지하차도 위험 안내'}}</span><button type="button" aria-label="우회 안내 닫기" @click="safetyDialog?.close()">×</button></header>
+        <div>
+          <h2 id="navigation-safety-title">{{safetyUnavailable?'안전한 우회 경로를 찾지 못했습니다':safety.mandatory?'통제 구간을 피하는 경로입니다':'우회 경로로 이동하시겠습니까?'}}</h2>
+          <p v-if="safety.mandatory" class="navigation-blocked-instruction"><strong>{{safety.blockedHazards?.length?safety.blockedHazards.join(' · '):'경로상의 지하차도'}} 통제 중</strong><span>해당 지하차도에 진입하지 말고 우회해 주세요.</span></p>
+          <p>{{safety.message}}</p>
+          <p v-if="safetyUnavailable" class="navigation-unavailable-help">기존 경로로 안내를 시작할 수 없습니다. 안전한 곳에서 경로를 다시 확인하고 현장 통제 안내를 따라 주세요.</p>
+          <p v-if="safety.suggestedDetour">우회 시 약 {{Math.ceil(safety.suggestedDetour.extraSec/60)}}분 추가 소요</p>
+        </div>
+        <footer>
+          <template v-if="safety.mandatory">
+            <button v-if="safetyUnavailable" type="button" @click="safetyDialog?.close()">닫기</button>
+            <button v-if="safetyUnavailable" type="button" class="primary" :disabled="busy" @click="reroute">경로 다시 찾기</button>
+            <button v-else type="button" class="primary" :disabled="busy||!active" @click="startSafeDetour">우회 경로로 안내 시작</button>
+          </template>
+          <template v-else>
+            <button v-if="safety.suggestedDetour" type="button" @click="safetyDialog?.close()">기존 경로 유지</button>
+            <button v-if="safety.suggestedDetour" type="button" class="primary" @click="acceptDetour">우회 경로 선택</button>
+            <button v-else type="button" class="primary" @click="safetyDialog?.close()">확인</button>
+          </template>
+        </footer>
+      </template>
+    </dialog></Teleport>
     </div></div
   >
 </template>
+<style scoped>
+.navigation-safety-dialog[data-blocked=true]{border-color:#354b62;background:#19293b;color:#e6eef8;}
+.navigation-safety-dialog[data-blocked=true] header{background:#22364c;color:#ff9aa8;border-bottom:1px solid #354b62;}
+.navigation-safety-dialog[data-blocked=true] h2{color:#e6eef8;}
+.navigation-safety-dialog[data-blocked=true] p{color:#adbed2;}
+.navigation-safety-dialog[data-blocked=true] .navigation-blocked-instruction{background:#3b303e;color:#f0c5cc;border:1px solid #65434f;}
+.navigation-safety-dialog[data-blocked=true] .navigation-unavailable-help{background:#22364c;color:#adbed2;}
+.navigation-blocked-instruction{display:grid;gap:6px;padding:14px;border-radius:10px;background:var(--status-danger-bg,#fde3e9);color:var(--status-danger-ink,#a32446);}
+.navigation-blocked-instruction strong{font-size:15px;line-height:23px;}.navigation-blocked-instruction span{font-size:13px;line-height:22px;}
+.navigation-unavailable-help{padding:12px;border-radius:9px;background:var(--r-soft);font-size:13px!important;color:var(--r-muted);}
+.navigation-reroute-notice{position:absolute;top:12px;left:12px;right:12px;z-index:35;display:flex;align-items:center;gap:10px;margin:0;padding:14px;border:1px solid var(--r-accent);border-radius:12px;background:var(--r-surface);color:var(--r-accent);font-size:13px;line-height:22px;box-shadow:var(--r-overlay-shadow);}
+.navigation-reroute-notice .ui-icon{width:20px;height:20px;flex:none;}
+.navigation-detour-banner{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:12px;border:1px solid var(--r-line);border-radius:10px;background:var(--r-selected);color:var(--r-accent);}
+.navigation-detour-banner>.ui-icon{width:22px;height:22px;flex:none;}.navigation-detour-banner>div{flex:1;min-width:0;}
+.navigation-detour-banner strong{font-size:13px;line-height:21px;}.navigation-detour-banner small{display:block;margin-top:3px;font-size:11px;line-height:18px;overflow-wrap:anywhere;}
+.navigation-detour-banner>button{flex:none;padding:6px 8px;min-height:36px;border:1px solid var(--r-line);border-radius:8px;background:var(--r-surface);color:var(--r-accent);font-size:12px;}
+.navigation-safety-dialog { box-sizing:border-box; width:min(420px,calc(100% - 32px)); max-height:calc(100dvh - 40px); padding:0; border:1px solid var(--status-caution-ink,#865000); border-radius:16px; background:var(--r-surface,#fff); color:var(--r-ink,#172d48); box-shadow:0 20px 70px #0004; } .navigation-safety-dialog::backdrop { background:#10203999; } .navigation-safety-dialog header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:var(--status-caution-bg,#fff1d6); font-weight:700; } .navigation-safety-dialog header button { border:0; background:transparent; color:inherit; font-size:24px; min-width:36px; min-height:36px; } .navigation-safety-dialog>div { padding:20px; } .navigation-safety-dialog h2 { margin:0 0 12px; font-size:20px; line-height:1.5; } .navigation-safety-dialog p { font-size:14px; line-height:1.8; overflow-wrap:anywhere; } .navigation-safety-dialog footer { display:flex; gap:8px; padding:0 20px 20px; } .navigation-safety-dialog footer button { flex:1; min-height:44px; padding:10px; border:1px solid var(--r-line,#dbe3ed); border-radius:9px; background:var(--r-surface,#fff); color:inherit; } .navigation-safety-dialog .primary { background:var(--r-accent,#225bb5); color:#fff; }
+</style>

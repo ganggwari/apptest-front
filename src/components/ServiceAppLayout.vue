@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import AdminBackButton from './AdminBackButton.vue'
+import CustomerMobileHeader from './CustomerMobileHeader.vue'
+import { workflowPageState } from '../utils/workflow-page-state'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
@@ -15,7 +17,7 @@ const auth = computed(
     (!manager.value && /\/screen-[234]$/.test(route.path)),
 )
 const map = computed(() => route.path === '/customer-app/screen-5')
-const title = computed(() =>
+const baseTitle = computed(() =>
   route.path === '/admin-app/notifications'
     ? '알림'
     : auth.value
@@ -40,6 +42,7 @@ const title = computed(() =>
                   ? 'FAQ'
                   : '내 정보',
 )
+const title = computed(() => workflowPageState.title || baseTitle.value)
 const links = [
   ['현황', '/admin-app/screen-3', '▦'],
   ['통제', '/admin-app/screen-4', '◼'],
@@ -56,14 +59,9 @@ function active(path: string) {
     class="service-app-layout"
     :class="{'app-manager':manager,'app-auth':auth,'app-map-screen':map,'app-manager-overview':route.path==='/admin-app/screen-3'}"
   >
-    <header v-if="!manager||auth" class="ah app-restored-header">
+    <CustomerMobileHeader v-if="!manager" :title="title" :back="!map&&!auth" :notifications="!auth" />
+    <header v-else-if="auth" class="ah app-restored-header">
       <AdminBackButton v-if="manager&&!auth&&!route.path.endsWith('/screen-3')" />
-      <RouterLink
-        v-if="!manager&&!map&&!auth&&!route.path.endsWith('/screen-3')"
-        :to="manager?'/admin-app/screen-3':'/customer-app/screen-5'"
-        class="app-back"
-        aria-label="이전 화면으로"
-      ><UiIcon name="back" /></RouterLink>
       <strong>{{title}}</strong>
       <NotificationBell v-if="!auth&&!manager&&app.account?.role==='customer'" />
       <RouterLink

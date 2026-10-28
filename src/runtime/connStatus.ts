@@ -1,9 +1,7 @@
-import { navigationWsUrl } from '../services/apiOrigin'
 // 실시간 연결 상태(SSE / WebSocket)를 화면 상단에 띄우는 작은 표시줄. 시연·테스트용.
 // ?nodemo=1 이면 숨김. SSE 상태는 useBackendEvents.ts 가 report 로 알려준다.
 type Sse = 'idle' | 'connecting' | 'open' | 'lost'
-type Ws = 'idle' | 'connecting' | 'open' | 'closed' | 'unsupported'
-const st = { sse: 'idle' as Sse, lastAt: 0, lastName: '', retry: 0, ws: 'idle' as Ws, wsAt: 0, url: '' }
+const st = { sse: 'idle' as Sse, lastAt: 0, lastName: '', retry: 0, url: '' }
 const listeners = new Set<() => void>()
 const poke = () => listeners.forEach((f) => f())
 
@@ -18,31 +16,8 @@ export function reportSse(state: Sse, extra?: { event?: string; retry?: number; 
   poke()
 }
 
-// WebSocket(내비 전용 /ws/navigation) 확인용. 앱 기능은 SSE 로 동작하며 WS 는 선택 항목이다.
-let sock: WebSocket | undefined
-export function probeWs() {
-  try {
-    if (typeof WebSocket === 'undefined') {
-      st.ws = 'unsupported'
-      return poke()
-    }
-    sock?.close()
-    st.ws = 'connecting'
-    poke()
-    const s = new WebSocket(navigationWsUrl())
-    sock = s
-    window.setTimeout(() => {
-      if (sock === s && st.ws === 'connecting') ((st.ws = 'closed'), s.close(), poke())
-    }, 6000)
-    s.onopen = () => ((st.ws = 'open'), (st.wsAt = Date.now()), poke())
-    s.onmessage = () => ((st.wsAt = Date.now()), poke())
-    s.onclose = () => (sock === s && ((st.ws = 'closed'), poke()))
-    s.onerror = () => (sock === s && ((st.ws = 'closed'), poke()))
-  } catch {
-    st.ws = 'closed'
-    poke()
-  }
-}
+// 메인 서버는 SSE 만 사용한다(WebSocket 제거). 호출부 호환을 위해 빈 함수로 둔다.
+export function probeWs() {}
 
 const ago = (t: number) => {
   if (!t) return '-'
@@ -82,21 +57,12 @@ export function installConnStatus() {
         col = '#9ca3af'
         bg = '#374151'
       }
-      const wsMap: Record<Ws, [string, string]> = {
-        idle: ['WS 미확인', '#9ca3af'],
-        connecting: ['WS 연결 중', '#fbbf24'],
-        open: ['WS 연결됨', '#4ade80'],
-        closed: ['WS 안 됨(내비 전용·선택)', '#fbbf24'],
-        unsupported: ['WS 미지원 브라우저', '#9ca3af'],
-      }
-      const [wsTxt, wsCol] = wsMap[st.ws]
       bar.style.background = bg
       bar.innerHTML = compact
         ? dot(col) + (st.sse === 'open' && !stale ? 'SSE' : 'SSE!')
-        : `<span>${dot(col)}${sseTxt}</span><span style="opacity:.5">|</span><span>${dot(wsCol)}${wsTxt}</span>`
+        : `<span>${dot(col)}${sseTxt}</span>`
     }
     bar.onclick = () => ((compact = !compact), render())
-    bar.ondblclick = () => probeWs()
     listeners.add(render)
     setInterval(render, 1000)
     render()

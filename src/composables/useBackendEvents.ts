@@ -1,9 +1,13 @@
-import { apiUrl } from '../services/apiOrigin'
+
 import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
 import { backend } from '../services/backend'
-import { reportSse, probeWs } from '../runtime/connStatus'
+import { apiUrl } from '../services/apiOrigin'
+import { reportSse } from '../runtime/connStatus'
+
 export type BackendEvent = { name: string; data: Record<string, any> }
+
 const eventNames = [
   'connected',
   'heartbeat',
@@ -21,139 +25,329 @@ const eventNames = [
   'data-changed',
   'pm-update',
 ]
-// One stream for the app, restarted when the authenticated identity changes.
-const WATCHDOG_MS = 40000 // 서버 하트비트 15초 간격의 2.5배
-const BACKOFF_MS = [1000, 2000, 5000, 10000, 20000]
+
+// SSE 진단 로그 활성화 여부.
+// 원인 파악이 끝나면 false로 변경하면 된다.
+const SSE_DEBUG = true
+
+let nextConnectionId = 0
+
+const readyStateName = (value: number) =>
+  value === EventSource.CONNECTING ? 'CONNECTING' :
+  value === EventSource.OPEN ? 'OPEN' : 'CLOSED'
+
+// 앱 전체에서 SSE 연결을 관리한다.
+// 인증된 사용자 정보가 변경될 때 연결을 교체한다.
 export function useBackendStream() {
   const app = useApp()
+  const route = useRoute()
+
   let stream: EventSource | undefined
-  let watchdog: number | undefined
-  let retryTimer: number | undefined
-  let attempts = 0
-  let countVersion = 0
-  let alive = true
-  const url = () => (app.account?.role === 'REGIONAL_ADMIN' ? '/api/admin/stream' : '/api/stream')
-  const emit = (name: string, data: Record<string, any>) =>
-    window.dispatchEvent(new CustomEvent<BackendEvent>('routel-backend-event', { detail: { name, data } }))
-  const clearTimers = () => {
-    clearTimeout(watchdog)
-    clearTimeout(retryTimer)
-    watchdog = retryTimer = undefined
-  }
-  const close = () => {
-    clearTimers()
-    stream?.close()
-    stream = undefined
-  }
-  const refreshManagerUnread = async (source: EventSource) => {
-    if (app.account?.role !== 'REGIONAL_ADMIN') return
-    const version = ++countVersion
-    try {
-      const result = await backend('/api/managers/me/notifications/unread-count')
-      if (stream === source && version === countVersion) {
-        const next = Math.max(0, Number(result?.total) || 0)
-        app.unread = next
-      }
-    } catch {
-      /* Keep the last count until the next event or reconnect. */
-    }
-  }
-  const scheduleRetry = () => {
-    if (!alive || retryTimer) return
-    const delay = BACKOFF_MS[Math.min(attempts++, BACKOFF_MS.length - 1)]
-    retryTimer = window.setTimeout(() => {
-      retryTimer = undefined
-      connect()
-    }, delay)
-  }
-  const armWatchdog = (source: EventSource) => {
-    clearTimeout(watchdog)
-    watchdog = window.setTimeout(() => {
-      if (stream !== source) return
-      // 하트비트가 끊김(프록시/절전/네트워크 전환): 연결을 새로 만든다.
-      close()
-      reportSse('lost', { retry: attempts })
-      scheduleRetry()
-    }, WATCHDOG_MS)
-  }
-  function connect() {
-    close()
-    if (!alive || typeof EventSource === 'undefined') return
-    const source = new EventSource(apiUrl(url()), { withCredentials: true })
-    stream = source
-    reportSse('connecting', { retry: attempts, url: url() })
-    source.onopen = () => {
-      if (stream === source) reportSse('open', { event: 'open' })
-    }
-    armWatchdog(source)
-    void refreshManagerUnread(source)
-    source.onerror = () => {
-      if (stream !== source) return
-      reportSse(source.readyState === EventSource.CLOSED ? 'lost' : 'connecting', { retry: attempts })
-      // CLOSED 면 브라우저가 재시도하지 않으므로 직접 백오프 재연결. CONNECTING 이면 브라우저 자동 재시도에 맡김.
-      if (source.readyState === EventSource.CLOSED) {
-        close()
-        scheduleRetry()
-      }
-    }
-    for (const name of eventNames)
-      source.addEventListener(name, (event) => {
-        if (stream !== source) return
-        attempts = 0
-        armWatchdog(source)
-        reportSse('open', { event: name })
-        if (name === 'heartbeat') return
-        if (name === 'connected' || name === 'notification-new') void refreshManagerUnread(source)
-        if (name === 'connected') {
-          emit(name, {})
-          return
-        }
-        try {
-          const data = JSON.parse((event as MessageEvent).data || '{}')
-          if (data && typeof data === 'object' && !Array.isArray(data)) emit(name, data)
-        } catch {
-          /* Ignore malformed events; REST remains authoritative. */
-        }
+  let connectionId = 0
+  let previousIdentity: (string | number | undefined)[] | undefined
+  let lastEventLogAt = 0
+  let bufferedEvents: Record<string, number> = {}
+  let lastOpenedAt = 0
+
+  // 공통 진단 로그
+  const debug = (
+    message: string,
+    detail: Record<string, unknown> = {},
+  ) => {
+    if (SSE_DEBUG) {
+      console.info(`[PUF:SSE] ${message}`, {
+        at: new Date().toISOString(),
+        route: route.path,
+        ...detail,
       })
+    }
   }
-  // 로그인 주체(계정/권한/지역)가 바뀌면 재연결.
+
+  // 일정 시간 동안 받은 이벤트를 종류별로 요약
+  const summarizeEvents = () => {
+    if (!Object.keys(bufferedEvents).length) return
+
+    debug('received events (summary)', {
+      connectionId,
+      counts: bufferedEvents,
+    })
+
+    bufferedEvents = {}
+  }
+
+  // 페이지 이동 추적
+  // 페이지 이동 자체가 SSE 재연결 사유는 아니다.
+  watch(
+    () => route.fullPath,
+    (to, from) => {
+      debug('route change (not a reason to reconnect)', {
+        from: from.split('?')[0],
+        to: to.split('?')[0],
+        connectionId,
+        readyState: stream
+          ? readyStateName(stream.readyState)
+          : 'none',
+      })
+    },
+  )
+
+  // 로그인 계정 및 권한 정보 변경 감시
   const stop = watch(
-    () => [
-      app.account?.id,
-      app.account?.role,
-      app.authVersion,
+  [
+    () => app.account?.id,
+    () => app.account?.role,
+    () => app.authVersion,
+    () =>
       (app.account?.regions || [])
         .map((region) => String(region.id))
         .sort()
         .join(','),
-    ],
-    () => {
-      attempts = 0
-      connect()
-      if (app.account) probeWs()
+  ],
+  (identity) => {
+      const changedFields = previousIdentity
+        ? [
+            'account.id',
+            'account.role',
+            'authVersion',
+            'regions',
+          ].filter(
+            (_, index) =>
+              previousIdentity![index] !== identity[index],
+          )
+        : ['initial watch']
+
+      previousIdentity = [...identity]
+
+      debug('identity watcher triggered', {
+        changedFields,
+        accountPresent: Boolean(app.account?.id),
+        role: app.account?.role,
+        authVersion: app.authVersion,
+        regionCount: app.account?.regions?.length ?? 0,
+      })
+
+      // 기존 SSE 연결 종료
+      if (stream) {
+        debug('closing prior connection', {
+          connectionId,
+          readyState: readyStateName(stream.readyState),
+        })
+
+        summarizeEvents()
+        stream.close()
+        stream = undefined
+      }
+
+      if (typeof EventSource === 'undefined') {
+        debug('EventSource unavailable')
+        return
+      }
+
+      // 사용자 유형에 맞는 SSE 주소 선택
+      const endpoint =
+        app.account?.role === 'REGIONAL_ADMIN'
+          ? '/api/admin/stream'
+          : '/api/stream'
+
+      const source = new EventSource(apiUrl(endpoint), {
+        withCredentials: true,
+      })
+
+      const id = ++nextConnectionId
+
+      connectionId = id
+      stream = source
+      reportSse('connecting', { url: endpoint })
+      lastEventLogAt = Date.now()
+      bufferedEvents = {}
+      lastOpenedAt = 0
+
+      debug('connection created', {
+        connectionId: id,
+        endpoint,
+        readyState: readyStateName(source.readyState),
+      })
+
+      // 연결 성공
+      source.onopen = () => {
+        if (stream !== source) return
+
+        lastOpenedAt = Date.now()
+        reportSse('open', { event: 'open' })
+
+        debug('OPEN', {
+          connectionId: id,
+          endpoint,
+          readyState: readyStateName(source.readyState),
+        })
+      }
+
+      // 연결 오류
+      // EventSource는 오류 후 자동 재연결을 시도할 수 있다.
+      source.onerror = () => {
+        if (stream !== source) return
+        reportSse(source.readyState === EventSource.CLOSED ? 'lost' : 'connecting')
+
+        debug('ERROR / browser may automatically retry', {
+          connectionId: id,
+          endpoint,
+          readyState: readyStateName(source.readyState),
+          openForMs: lastOpenedAt
+            ? Date.now() - lastOpenedAt
+            : null,
+        })
+      }
+
+      let countVersion = 0
+
+      // 관리자 미읽음 알림 개수 갱신
+      const refreshManagerUnread = async () => {
+        if (app.account?.role !== 'REGIONAL_ADMIN') return
+
+        const version = ++countVersion
+
+        try {
+          const result = await backend(
+            '/api/managers/me/notifications/unread-count',
+          )
+
+          if (stream === source && version === countVersion) {
+            app.unread = Math.max(
+              0,
+              Number(result?.total) || 0,
+            )
+          }
+        } catch (error) {
+          debug('unread-count request failed', {
+            connectionId: id,
+            errorType:
+              error instanceof Error
+                ? error.name
+                : typeof error,
+            message:
+              error instanceof Error
+                ? error.message
+                : String(error),
+          })
+        }
+      }
+
+      void refreshManagerUnread()
+
+      // 서버에서 전달하는 이벤트 등록
+      for (const name of eventNames) {
+        source.addEventListener(name, (event) => {
+          if (stream !== source) return
+          reportSse('open', { event: name })
+          if (name === 'heartbeat') return
+
+          // 최초 연결 또는 재연결 후 서버 이벤트
+          if (name === 'connected') {
+            debug('CONNECTED server event', {
+              connectionId: id,
+              endpoint,
+            })
+
+            void refreshManagerUnread()
+
+            window.dispatchEvent(
+              new CustomEvent<BackendEvent>(
+                'routel-backend-event',
+                {
+                  detail: {
+                    name,
+                    data: {},
+                  },
+                },
+              ),
+            )
+
+            return
+          }
+
+          if (name === 'notification-new') {
+            void refreshManagerUnread()
+          }
+
+          // 이벤트 수신량 집계
+          bufferedEvents[name] =
+            (bufferedEvents[name] || 0) + 1
+
+          // 5초 간격으로 이벤트 수신량 요약 출력
+          if (Date.now() - lastEventLogAt >= 5000) {
+            summarizeEvents()
+            lastEventLogAt = Date.now()
+          }
+
+          try {
+            const data = JSON.parse(
+              (event as MessageEvent).data || '{}',
+            )
+
+            if (
+              data &&
+              typeof data === 'object' &&
+              !Array.isArray(data)
+            ) {
+              window.dispatchEvent(
+                new CustomEvent<BackendEvent>(
+                  'routel-backend-event',
+                  {
+                    detail: {
+                      name,
+                      data,
+                    },
+                  },
+                ),
+              )
+            }
+          } catch (error) {
+            debug('malformed SSE event ignored', {
+              connectionId: id,
+              name,
+              errorType:
+                error instanceof Error
+                  ? error.name
+                  : typeof error,
+            })
+          }
+        })
+      }
     },
     { immediate: true },
   )
-  // 탭 복귀/네트워크 복구 시 끊겼으면 즉시 재연결.
-  const wake = () => {
-    if (document.visibilityState === 'hidden') return
-    if (!stream || stream.readyState === EventSource.CLOSED) {
-      attempts = 0
-      connect()
-    }
-  }
-  document.addEventListener('visibilitychange', wake)
-  window.addEventListener('online', wake)
+
+  // 앱에서 SSE 관리 컴포넌트가 해제될 때 정리
   onBeforeUnmount(() => {
-    alive = false
+    debug('useBackendStream unmounted', {
+      connectionId,
+    })
+
     stop()
-    document.removeEventListener('visibilitychange', wake)
-    window.removeEventListener('online', wake)
-    close()
+    summarizeEvents()
+    stream?.close()
+    stream = undefined
   })
 }
-export function useBackendEvents(handler: (event: BackendEvent) => void) {
-  const receive = (event: Event) => handler((event as CustomEvent<BackendEvent>).detail)
-  onMounted(() => window.addEventListener('routel-backend-event', receive))
-  onBeforeUnmount(() => window.removeEventListener('routel-backend-event', receive))
+
+// 각 화면에서 SSE 이벤트를 구독하기 위한 함수
+export function useBackendEvents(
+  handler: (event: BackendEvent) => void,
+) {
+  const receive = (event: Event) =>
+    handler((event as CustomEvent<BackendEvent>).detail)
+
+  onMounted(() => {
+    window.addEventListener(
+      'routel-backend-event',
+      receive,
+    )
+  })
+
+  onBeforeUnmount(() => {
+    window.removeEventListener(
+      'routel-backend-event',
+      receive,
+    )
+  })
 }

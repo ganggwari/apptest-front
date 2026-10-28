@@ -4,7 +4,7 @@
 #app .customer-shell .customer-header .customer-header-inner {
   position:relative; display:grid; align-items:center; width:100%; max-width:1600px;
   margin-inline:auto; min-width:0; min-height:84px; padding:8px 0;
-  grid-template-columns:minmax(0,1fr) 560px minmax(0,1fr); grid-template-rows:auto; gap:16px;
+  grid-template-columns:minmax(0,1fr) 800px minmax(0,1fr); grid-template-rows:auto; gap:16px;
 }
 #app .customer-shell .customer-header .customer-logo { grid-column:1; grid-row:1; font-size:28px; line-height:36px; justify-self:start; }
 #app .customer-shell .customer-header .customer-main-nav {
@@ -16,7 +16,7 @@
 #app .customer-shell .customer-header .customer-member-nav .theme-toggle { position:static; }
 #app .customer-shell .customer-header .header-download { padding:10px 12px; white-space:nowrap; }
 #app .customer-shell .customer-header .customer-header-dropdown { display:block; border-top:1px solid var(--r-line); border-bottom:1px solid var(--r-line); }
-#app .customer-shell .customer-header .header-dropdown-columns { width:560px; max-width:100%; margin-inline:auto; padding:20px 0; gap:0; }
+#app .customer-shell .customer-header .header-dropdown-columns { width:800px; max-width:100%; margin-inline:auto; padding:20px 0; gap:0; }
 #app .customer-shell .customer-header .header-dropdown-column a { padding:9px 6px; font-size:15px; line-height:23px; border-radius:8px; }
 
 /* Apply the same visible switch to modern and legacy administrator headers. */
@@ -36,6 +36,10 @@
 #app .page-admin-dashboard .fixed-top5 .rank { min-width:0; width:100%; box-sizing:border-box; overflow-x:hidden; }
 #app .page-admin-dashboard .fixed-top5 .rank>li { display:grid; grid-template-columns:22px minmax(0,1fr) auto; gap:10px; min-width:0; box-sizing:border-box; }
 #app .page-admin-dashboard .fixed-top5 .rank .t { min-width:0; white-space:normal; overflow-wrap:anywhere; }
+#app .page-admin-dashboard .fixed-top5 .rank>li:has(.dashboard-equipment-link) { position:relative; cursor:pointer; }
+#app .page-admin-dashboard .fixed-top5 .dashboard-equipment-link::after { content:''; position:absolute; inset:0; z-index:2; }
+#app .page-admin-dashboard .fixed-top5 .rank>li:has(.dashboard-equipment-link):hover { background:var(--r-selected); }
+#app .page-admin-dashboard .fixed-top5 .dashboard-equipment-link:focus-visible::after { outline:2px solid var(--r-accent); outline-offset:-2px; border-radius:6px; }
 #app .page-admin-dashboard .fixed-top5 .rank .sc { width:auto; min-width:5.5ch; white-space:nowrap; font-variant-numeric:tabular-nums; }
 #app .page-admin-dashboard .fixed-top5 .widget-original-content { overflow-x:hidden!important; }
 
@@ -69,8 +73,9 @@
 #app .legacy-live-map .risk-history-chart path[stroke='#225f9b'] { stroke:var(--r-accent); }
 #app .legacy-live-map .risk-history-chart circle[fill='#225f9b'] { fill:var(--r-accent); }
 #app .legacy-live-map .risk-history-chart path[stroke-width='3']:not([stroke-dasharray]) { animation:routel-observation-enter 550ms var(--motion-ease); }
-#app .legacy-live-map .map-weather-widget { background:transparent; box-shadow:none; }
 #app :is(.map-weather-marker,.map-weather-detail) { background:var(--r-surface); color:var(--r-ink); border-color:var(--r-line); box-shadow:var(--r-shadow); }
+#app .legacy-live-map .mapw .map-weather-widget { background:transparent; border:0; box-shadow:none; }
+#app .legacy-live-map .mapw :is(.customer-map-control-dock,.customer-map-control-dock .map-control-toggle,.kakao-map-controls) { border-radius:999px; }
 /* Earlier mobile dark rules use !important; keep the weather card on the
    shared surface as well, including its expanded state. */
 #app .mobile-app-map .map-weather-widget :is(.map-weather-marker,.map-weather-detail) { background:var(--r-surface)!important; color:var(--r-ink)!important; border-color:var(--r-line); }
@@ -90,12 +95,19 @@
   #app .legacy-live-map .lst .it:hover { background:var(--r-selected); }
   #app .customer-header .header-dropdown-column a:hover { background:var(--r-selected); color:var(--r-accent); }
 }
+/* Keep equal outer columns at laptop widths so the menu stays centred on
+   the viewport while leaving room for the member actions on the right. */
+@media (min-width:1400px) and (max-width:1700px) {
+  #app .customer-shell .customer-header { --customer-centered-nav-width:clamp(500px,calc(100vw - 900px),800px); }
+  #app .customer-shell .customer-header .customer-header-inner { grid-template-columns:minmax(0,1fr) var(--customer-centered-nav-width) minmax(0,1fr); }
+  #app .customer-shell .customer-header .header-dropdown-columns { width:var(--customer-centered-nav-width); margin-inline:auto; }
+}
 @media (max-width:1399px) {
   #app .customer-shell .customer-header .customer-header-inner { grid-template-columns:auto minmax(0,1fr); grid-template-rows:auto auto; gap:6px 20px; padding:10px 0 4px; }
   #app .customer-shell .customer-header .customer-member-nav { grid-column:2; grid-row:1; }
-  #app .customer-shell .customer-header .customer-main-nav { grid-column:1/-1; grid-row:2; max-width:720px; }
+  #app .customer-shell .customer-header .customer-main-nav { grid-column:1/-1; grid-row:2; max-width:800px; }
   #app .customer-shell .customer-header .customer-menu-link { height:48px; }
-  #app .customer-shell .customer-header .header-dropdown-columns { width:720px; }
+  #app .customer-shell .customer-header .header-dropdown-columns { width:800px; }
 }
 @media (max-width:700px) {
   #app .customer-shell .customer-header { padding-inline:16px; }
@@ -135,6 +147,8 @@
   text-align:center; text-decoration:none; white-space:normal; overflow-wrap:anywhere;
 }
 #app .restored-summary-drawer .service-actions>button:disabled { color:var(--r-muted); background:var(--r-soft); opacity:.55; }
+#app dialog.restored-summary-drawer .service-actions+.service-actions { margin-top:10px; }
+#app .restored-summary-drawer .service-actions>:last-child:nth-child(odd) { grid-column:1/-1; }
 
 /* Recent events: a continuous neutral rail with gently glowing status nodes.
    Keep the existing widget size, internal scrolling and ten-item pagination. */
@@ -161,6 +175,7 @@
 #app .water-dashboard .fixed-events .tl>li>.timeline-event-card {
   display:block; padding:12px 14px; border:1px solid var(--dash-line);
   border-radius:10px; background:var(--dash-surface); min-width:0;
+  color:inherit; text-decoration:none; cursor:pointer;
 }
 #app .water-dashboard .fixed-events .tl .timeline-event-body { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:7px; min-width:0; }
 #app .water-dashboard .fixed-events .tl .timeline-event-body strong { min-width:0; }

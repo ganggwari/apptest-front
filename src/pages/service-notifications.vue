@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import AppPagination from '../components/AppPagination.vue'
+import NotificationDetailView from '../components/NotificationDetailView.vue'
 import { useNotificationGlow } from '../stores/notificationGlow'
 const notificationGlow = useNotificationGlow()
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { notificationTarget } from '../utils/notification-target'
 import {
   useCustomerNotifications,
   notificationCategories,
@@ -13,6 +16,7 @@ import { displayDate } from '../utils/display-date'
 import { useBackendEvents } from '../composables/useBackendEvents'
 import NotificationSettings from '../components/NotificationSettings.vue'
 const route = useRoute(),
+  router = useRouter(),
   notifications = useCustomerNotifications(),
   rows = ref<CustomerNotification[]>([]),
   page = ref(1),
@@ -24,7 +28,7 @@ const route = useRoute(),
   busy = ref(false),
   error = ref(''),
   expanded = ref<number | null>(null)
-const pageSize = computed(() => route.path.startsWith('/customer-app/') ? 20 : 10)
+const pageSize = 10
 useBackendEvents(({ name, data }) => {
   if (name === 'connected') {
     void refresh()
@@ -40,12 +44,12 @@ useBackendEvents(({ name, data }) => {
   const previous = rows.value.find((item) => item.id === data.id)
   if (!previous) {
     total.value++
-    pages.value = Math.max(1, Math.ceil(total.value / pageSize.value))
+    pages.value = Math.max(1, Math.ceil(total.value / pageSize))
   }
   rows.value = [
     { ...data, read: previous?.read ?? false } as CustomerNotification,
     ...rows.value.filter((item) => item.id !== data.id),
-  ].slice(0, pageSize.value)
+  ].slice(0, pageSize)
 })
 let alive = true,
   sequence = 0
@@ -56,7 +60,7 @@ async function load() {
   try {
     const result = await notifications.list({
       page: page.value,
-      size: pageSize.value,
+      size: pageSize,
       category: category.value,
       unreadOnly: unreadOnly.value,
     })
@@ -75,6 +79,10 @@ async function load() {
   }
 }
 async function open(item: CustomerNotification) {
+  if (route.path.startsWith('/customer-app/')) {
+    await router.push({ path: route.path, query: { ...route.query, notification: String(item.id) } })
+    return
+  }
   if (expanded.value === item.id) {
     expanded.value = null
     return
@@ -86,10 +94,15 @@ async function open(item: CustomerNotification) {
       if (alive) item.read = true
     } catch (e) {
       if (alive) error.value = (e as Error).message
+      return
     }
   }
+  const destination=notificationTarget(item,false,route.path,route.path)
+  if(alive&&typeof destination==='object'&&'path' in destination&&destination.path!==route.path)
+    await router.push(destination)
 }
 async function selectFromLink() {
+  if (route.path.startsWith('/customer-app/')) return
   const id = Number(route.query.notification)
   if (!Number.isSafeInteger(id) || id <= 0) return
   const item = rows.value.find((row) => row.id === id)
@@ -138,10 +151,11 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <main class="service-workspace customer-notification-center"
-    ><div class="service-heading"
+  <NotificationDetailView v-if="route.path.startsWith('/customer-app/')&&route.query.notification" />
+  <main v-else class="service-workspace customer-notification-center" :class="{'app-notification-center':route.path.startsWith('/customer-app/')}"
+    ><div class="service-heading" :class="{'app-resource-heading':route.path.startsWith('/customer-app/')}"
       ><h1>알림 내역</h1
-      ><button type="button" :disabled="loading" @click="refresh">새로고침</button></div
+      ><button v-if="!route.path.startsWith('/customer-app/')" type="button" :disabled="loading" @click="refresh">새로고침</button></div
     ><details v-if="route.path.startsWith('/customer-app/')" class="notification-settings-details"
       ><summary>알림 수신 설정</summary><NotificationSettings /></details
     ><NotificationSettings v-else /><div class="notification-center-tools"
@@ -173,20 +187,21 @@ onBeforeUnmount(() => {
         ><button
           type="button"
           class="notification-center-item"
-          :aria-expanded="expanded===item.id"
+          :aria-expanded="route.path.startsWith('/customer-app/')?undefined:expanded===item.id"
           @click="open(item)"
           ><span class="notification-center-category">{{notificationCategory(item.category)}}</span
           ><span class="notification-center-title">{{item.title}}</span
           ><span v-if="!item.read" class="notification-unread-dot" aria-label="안 읽음"></span
           ><time>{{displayDate(item.createdAt)}}</time
-          ><span aria-hidden="true">{{expanded===item.id?'⌃':'⌄'}}</span></button
+          ><span aria-hidden="true">{{route.path.startsWith('/customer-app/')?'›':expanded===item.id?'⌃':'⌄'}}</span></button
         ><p v-if="expanded===item.id" class="notification-center-body">{{item.body}}</p></li
       ><li
         v-if="!rows.length"
         class="notification-center-empty"
         >{{unreadOnly?'안 읽은 알림이 없습니다.':'받은 알림이 없습니다.'}}</li
       ></ul
-    ><nav class="service-pagination" aria-label="알림 페이지"
+    ><AppPagination v-if="route.path.startsWith('/customer-app/')" :page="page" :pages="pages" :disabled="loading" @change="page=$event;load()" />
+    <nav v-else class="service-pagination" aria-label="알림 페이지"
       ><button type="button" :disabled="page<=1||loading" @click="page--;load()">이전</button
       ><span>{{page}} / {{pages}} 페이지 · 전체 {{total}}개</span
       ><button type="button" :disabled="page>=pages||loading" @click="page++;load()"
