@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { backend } from '../services/backend'
-import { enableFcm, disableFcm } from '../services/fcmPush'
+import { enableFcm, disableFcm, setFcmOptOut } from '../services/fcmPush'
 import { useApp } from '../stores/app'
 import { useCustomerNotifications } from '../stores/customerNotifications'
 const app = useApp()
@@ -32,7 +32,7 @@ async function toggle() {
   message.value = ''
   try {
     if (notifications.browserEnabled) {
-      if (app.account?.role === 'customer') await disableFcm('customer')
+      if (app.account?.role === 'customer') { await disableFcm('customer'); setFcmOptOut('customer', String(app.account.id), true) }
       notifications.setBrowserEnabled(false)
       message.value = '이 브라우저의 새 알림을 껐습니다.'
       return
@@ -52,6 +52,7 @@ async function toggle() {
     }
     if (!app.account || app.account.role !== 'customer') throw new Error('고객 로그인이 필요합니다.')
     await enableFcm('customer', app.account.id)
+    setFcmOptOut('customer', String(app.account.id), false)
     notifications.setBrowserEnabled(true)
     await load()
     message.value = 'FCM 푸시 토큰이 등록되었습니다. 앱을 닫아도 푸시를 받을 수 있습니다.'

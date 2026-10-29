@@ -36,7 +36,7 @@ import PublicChatbot from './components/PublicChatbot.vue'
 import CustomerRuGuide from './components/CustomerRuGuide.vue'
 import { mobileInteractions } from './runtime/mobileInteractions'
 import { useApp } from './stores/app'
-import { enableFcm, resetFcmOwner, isFcmOptedOut } from './services/fcmPush'
+import { enableFcm, resetFcmOwner, syncFcmOptOut } from './services/fcmPush'
 import { unlockManagerAlertAudio, playManagerAlert } from './runtime/managerAlertSound'
 useBackendStream()
 if (typeof window !== 'undefined') {
@@ -57,7 +57,10 @@ watch(() => [app.account?.id, app.account?.role] as const, ([id, role], previous
   if (!id || !role) { resetFcmOwner(); return }
   if ((id !== oldId || role !== oldRole) && 'Notification' in window && Notification.permission === 'granted') {
     const fcmRole = role === 'customer' ? 'customer' : 'REGIONAL_ADMIN'
-    if (!isFcmOptedOut(fcmRole, String(id))) void enableFcm(fcmRole, String(id)).catch(e => console.warn('FCM 자동 재등록 실패:', e))
+    void syncFcmOptOut(fcmRole, String(id)).then((optedOut) => {
+      if (optedOut || app.account?.id !== id || app.account?.role !== role) return
+      return enableFcm(fcmRole, String(id))
+    }).catch(e => console.warn('FCM 자동 재등록 실패:', e))
   }
 }, { immediate: true })
 useBackendEvents(({ name, data }) => {

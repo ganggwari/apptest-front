@@ -100,13 +100,29 @@ export async function disableFcm(role: Role) {
   lastOwner = ''
   localStorage.removeItem(ownerKey)
 }
-// 사용자가 마이페이지에서 푸시를 직접 끈 계정은 로그인 때 자동으로 다시 켜지 않는다.
+// 사용자가 앱에서 푸시를 직접 끈 계정은 로그인 때 자동으로 다시 켜지 않는다.
+// 기준은 서버(계정에 저장)이고, localStorage 는 서버 응답 전·오프라인일 때 쓰는 캐시다. 앱을 지웠다 다시 깔거나 기기를 바꿔도 서버 값이 유지된다.
 const optOutKey = (role: Role, id: string) => `puf-fcm-optout:${role}:${id}`
+const preferencePath = (role: Role) => (role === 'customer' ? '/api/customers/me/push-preference' : '/api/managers/me/push-preference')
+function cacheOptOut(role: Role, id: string, value: boolean) {
+  try { value ? localStorage.setItem(optOutKey(role, id), '1') : localStorage.removeItem(optOutKey(role, id)) } catch { /* ignore */ }
+}
 export function isFcmOptedOut(role: Role, id: string) {
   try { return localStorage.getItem(optOutKey(role, id)) === '1' } catch { return false }
 }
+// 서버에 저장된 '끈 상태'를 읽어 캐시에 반영한다. 서버에 닿지 않으면 캐시 값을 그대로 쓴다.
+export async function syncFcmOptOut(role: Role, id: string): Promise<boolean> {
+  try {
+    const pref = await backend<{ optOut: boolean }>(preferencePath(role))
+    cacheOptOut(role, id, !!pref?.optOut)
+    return !!pref?.optOut
+  } catch {
+    return isFcmOptedOut(role, id)
+  }
+}
 export function setFcmOptOut(role: Role, id: string, value: boolean) {
-  try { value ? localStorage.setItem(optOutKey(role, id), '1') : localStorage.removeItem(optOutKey(role, id)) } catch { /* ignore */ }
+  cacheOptOut(role, id, value)
+  void backend(preferencePath(role), { method: 'PUT', body: { optOut: value } }).catch(() => { /* 다음 로그인 때 서버 값으로 다시 맞춘다 */ })
 }
 export function isFcmActive(role: Role, id: string) {
   return 'Notification' in window && Notification.permission === 'granted' && localStorage.getItem(ownerKey) === `${role}:${id}`

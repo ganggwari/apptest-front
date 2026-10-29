@@ -2207,8 +2207,6 @@ onBeforeUnmount(() => {
                 >{{selected.riskScore===null?'—':selected.riskScore.toFixed(1)+'점'}}</strong
               ></div
             ><div
-              ><small>통제 상태</small><strong>{{controlLabel(selected)}}</strong></div
-            ><div
               ><small>현재 수위</small
               ><strong
                 >{{selected.currentWaterCm==null?'—':selected.currentWaterCm+' cm'}}</strong

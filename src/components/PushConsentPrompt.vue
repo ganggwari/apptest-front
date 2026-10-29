@@ -6,7 +6,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
 import { useCustomerNotifications } from '../stores/customerNotifications'
-import { enableFcm } from '../services/fcmPush'
+import { enableFcm, syncFcmOptOut } from '../services/fcmPush'
 
 const app = useApp(), route = useRoute(), notifications = useCustomerNotifications()
 const visible = ref(false), busy = ref(false), message = ref('')
@@ -32,7 +32,12 @@ function shouldAsk() {
 watch(() => [app.account?.id, app.account?.role, route.path] as const, () => {
   clearTimeout(timer)
   if (visible.value || !shouldAsk()) return
-  timer = setTimeout(() => { if (shouldAsk()) visible.value = true }, 1200)
+  timer = setTimeout(async () => {
+    if (!shouldAsk()) return
+    // 푸시를 직접 끈 계정(서버에 저장됨)은 재설치·기기 변경 후에도 다시 묻지 않는다
+    const optedOut = await syncFcmOptOut(manager.value ? 'REGIONAL_ADMIN' : 'customer', String(app.account?.id))
+    if (!optedOut && shouldAsk()) visible.value = true
+  }, 1200)
 }, { immediate: true })
 onBeforeUnmount(() => clearTimeout(timer))
 

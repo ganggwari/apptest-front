@@ -40,6 +40,9 @@ const routes = ref<Route[]>([]),
   busy = ref(false),
   error = ref(''),
   mapError = ref('')
+// 출발지와 목적지가 5m 이내면 길 안내가 필요 없다. 오류가 아니라 안내 카드로 보여 준다(서버가 카카오의 같은 사유 응답을 돌려줘도 동일하게 처리)
+const NEAR_DESTINATION = 'NEAR_DESTINATION'
+const nearDestination = computed(() => error.value === NEAR_DESTINATION || /(5\s?m\s*이내|출발지.{0,12}(도착지|목적지).{0,12}(같|가깝|이내))/.test(error.value))
 const safety = ref<SafetyRoute|null>(null)
 const safetyUnavailable = computed(()=>!!safety.value?.mandatory&&!safety.value.detoured)
 const rerouting=ref(false)
@@ -259,6 +262,7 @@ async function runSearch() {
       resolvePlace('origin', current.signal),
       resolvePlace('destination', current.signal),
     ])
+    if (distanceMeters(from, to) <= 5) throw Error(NEAR_DESTINATION)
     void loadInfo(to, current.signal)
     let candidates:Route[]
     if (store.account) {
@@ -366,7 +370,8 @@ const requested = ref(false),
   arrived = ref(false),
   voice = ref(true),
   gpsError = ref('')
-const drivingMode = ref<'gps' | 'demo'>('gps'),
+// 시연 주행(가상 위치)이 기본이다. 실제 GPS 는 주행 방식에서 직접 고를 때만 쓴다
+const drivingMode = ref<'gps' | 'demo'>('demo'),
   demoSpeed = ref(4),
   demoPaused = ref(false),
   demoMeters = ref(0)
@@ -905,8 +910,7 @@ onBeforeUnmount(() => {
                   >검색</button
                 ></div
               ></label
-            ><button class="btn p" :disabled="busy">{{busy?'경로 조회 중…':'길찾기'}}</button><button type="button" class="btn navigation-demo-start" :disabled="busy" @click="startDemoTrip">시연 바로 시작</button
-            ><div class="navigation-demo-routes"
+            ><button class="btn p" :disabled="busy">{{busy?'경로 조회 중…':'길찾기'}}</button><div class="navigation-demo-routes"
               ><button v-for="(t,i) in DEMO_TRIPS" :key="t.label" type="button" :disabled="busy" @click="useDemoTrip(i)">{{t.short}}</button
               ></div
             ></form
@@ -917,7 +921,7 @@ onBeforeUnmount(() => {
                 ><small>{{place.address}}</small></button
               ></li
             ></ul
-          ><p v-if="error" class="directions-error" role="alert">{{error}}</p></div></section
+          ><p v-if="error&&!nearDestination" class="directions-error" role="alert">{{error}}</p></div></section
         >
 <div v-if="!editing" class="navigation-hud"
           ><button
@@ -970,6 +974,14 @@ onBeforeUnmount(() => {
         >
 <p v-if="mapError" class="navigation-map-error" role="status">{{mapError}}</p
         ><p v-if="gpsError" class="navigation-gps-error" role="alert">{{gpsError}}</p>
+<section v-if="nearDestination&&!active" class="navigation-summary directions-results navigation-near" aria-label="경로 안내"
+          ><div v-if="nearDestination" class="directions-info-card" role="status"
+            ><span class="directions-info-card-icon" aria-hidden="true"
+              ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg
+            ></span
+            ><div><b>이미 목적지 근처예요</b><small>출발지와 목적지가 5m 이내라 길 안내가 필요하지 않아요. 다른 목적지를 검색해 보세요.</small></div></div
+        ></section
+        >
 <section ref="summaryElement" v-if="active" class="navigation-summary directions-results" :class="{'summary-collapsed':!summaryExpanded}" aria-label="경로 결과"
           @pointerdown="startSummarySwipe" @pointerup="endSummarySwipe" @pointercancel="summaryPointer=undefined"
           ><button type="button" class="navigation-summary-handle" :aria-expanded="summaryExpanded" aria-label="주행 패널 접기·펼치기" @click="toggleSummary">
