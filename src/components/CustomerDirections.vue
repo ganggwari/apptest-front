@@ -71,7 +71,19 @@ function setNotice(notice: Omit<RouteNotice, 'id'>, autoDismiss = false) {
     noticeTimer = setTimeout(() => { if (routeNotice.value?.id === next.id) routeNotice.value = null }, NOTICE_SECONDS * 1000)
 }
 // 같은 위험 상황을 사용자가 이미 취소·확인했으면 SSE 재연결 등으로 다시 조회해도 같은 카드를 또 띄우지 않는다
-const riskKey = (route: SafetyRoute) => (route.advisoryHazards || []).join('|') + (route.suggestedDetour ? '+detour' : '')
+// 서버 평가의 위험 지점 목록은 이름뿐이라 관심→주의 같은 단계 변화를 알 수 없다. 단계는 /hazards 로 따로 받아 함께 비교한다
+const hazardLevels = ref<Record<string, string>>({})
+async function fetchHazardLevels(signal?: AbortSignal): Promise<Record<string, string>> {
+  try {
+    const state = await navigationRequest<{ hazards?: { name: string; levelLabel: string }[] }>('hazards', {}, signal)
+    return Object.fromEntries((state.hazards || []).map(h => [h.name, h.levelLabel]))
+  } catch {
+    return {}
+  }
+}
+const withLevel = (names: string[] | undefined, levels: Record<string, string>) =>
+  (names || []).map(name => (levels[name] ? `${name}(${levels[name]})` : name))
+const riskKey = (route: SafetyRoute) => withLevel(route.advisoryHazards, hazardLevels.value).join('|') + (route.suggestedDetour ? '+detour' : '')
 function presentSafety() {
   const result = safety.value
   if (!result) return
@@ -84,7 +96,7 @@ function presentSafety() {
   }
   if (!result.advisoryHazards?.length && !result.suggestedDetour) return
   if (riskKey(result) === declinedRiskKey) return
-  const hazards = result.advisoryHazards?.length ? result.advisoryHazards.join(' · ') : '경로상의 지하차도'
+  const hazards = result.advisoryHazards?.length ? withLevel(result.advisoryHazards, hazardLevels.value).join(' · ') : '경로상의 지하차도'
   const extra = result.suggestedDetour
     ? ` · 우회 시 약 ${Math.max(1, Math.ceil(result.suggestedDetour.extraSec / 60))}분 더 걸려요` : ''
   setNotice({ kind: 'risk', title: '전방 지하차도 위험단계가 올랐어요', text: `${hazards}${extra}` })
@@ -250,8 +262,12 @@ async function runSearch() {
     void loadInfo(to, current.signal)
     let candidates:Route[]
     if (store.account) {
-      const assessed=await navigationRequest<SafetyRoute>('route',{origin:coord(from),destination:coord(to)},current.signal)
+      const [assessed,levels]=await Promise.all([
+        navigationRequest<SafetyRoute>('route',{origin:coord(from),destination:coord(to)},current.signal),
+        fetchHazardLevels(current.signal),
+      ])
       if(!alive||current.signal.aborted)return
+      hazardLevels.value=levels
       safety.value=assessed
       if(assessed.mandatory&&!assessed.detoured){throw Error(assessed.message||'통제 지하차도를 피하는 경로를 찾지 못했습니다.')}
       candidates=[safetyRouteCandidate(assessed)]
@@ -702,11 +718,12 @@ async function reroute() {
   } finally {rerouting.value=false;reroutingDriving.value=false}
 }
 // 현재 경로와 관련된 위험 정보만 비교한다. 다른 지하차도가 바뀐 경우에는 값이 같아서 아무 것도 하지 않는다
-const hazardSignature = (route: SafetyRoute | null) =>
+const hazardSignature = (route: SafetyRoute | null, levels: Record<string, string>) =>
   route
     ? JSON.stringify([
         route.mandatory, route.detoured, !!route.suggestedDetour,
-        [...(route.passesHazards || [])].sort(), [...(route.blockedHazards || [])].sort(), [...(route.advisoryHazards || [])].sort(),
+        [...(route.passesHazards || [])].sort(), [...(route.blockedHazards || [])].sort(),
+        withLevel(route.advisoryHazards, levels).sort(), // 관심→주의처럼 단계만 오른 경우도 달라진 것으로 본다
       ])
     : ''
 let hazardChecking = false, hazardRecheck = false
@@ -716,8 +733,11 @@ async function checkRouteHazards() {
   hazardChecking = true
   try {
     // 안내를 멈추지 않고 서버 평가만 다시 받아 온다 (길찾기를 처음 눌렀을 때와 같은 출발·도착으로 비교)
-    const assessed = await navigationRequest<SafetyRoute>('route', { origin: coord(origin.value), destination: coord(destination.value) })
-    if (!alive || hazardSignature(assessed) === hazardSignature(safety.value)) return
+    const [assessed, levels] = await Promise.all([
+      navigationRequest<SafetyRoute>('route', { origin: coord(origin.value), destination: coord(destination.value) }),
+      fetchHazardLevels(),
+    ])
+    if (!alive || hazardSignature(assessed, levels) === hazardSignature(safety.value, hazardLevels.value)) return
     if (requested.value) await reroute()
     else if (!busy.value) await runSearch()
   } catch {

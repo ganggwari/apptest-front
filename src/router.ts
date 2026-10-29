@@ -8,10 +8,12 @@ const routes = [
   { path: '/admin-app/menu', component: pages['./pages/admin-app-menu.vue'] },
   { path: '/admin-app/inspection', component: pages['./pages/pm-inspection.vue'] },
   {
-    path: '/admin-app/:resource(ocr|reviews|transits|transfers|notices|inquiries)',
+    path: '/admin-app/:resource(ocr|reviews|transits|transfers)',
     component: pages['./pages/backend-resource.vue'],
   },
   { path: '/admin-app/notifications', component: pages['./pages/backend-resource.vue'] },
+  // 고객 문의·공지는 관리자 앱에서 처리하지 않는다 (웹 관리자 페이지에서 확인)
+  { path: '/admin-app/:resource(notices|inquiries)', redirect: '/admin-app/notifications' },
   {
     path: '/admin-app/:section(history|document|contacts)',
     component: pages['./pages/admin-app-extra.vue'],

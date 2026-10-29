@@ -1,6 +1,10 @@
 import type { RouteLocationRaw } from 'vue-router'
 import { managerAppPath } from './manager-app-path'
 
+// 관리자 앱 메뉴에 처리 화면이 없는 알림(고객 문의·공지)은 앱에서 이동하지 않고 웹에서 확인하도록 안내한다
+export function isWebOnlyNotification(item:{refType?:string},manager:boolean,currentPath:string):boolean {
+  return manager&&currentPath.startsWith('/admin-app/')&&['INQUIRY','NOTICE'].includes(String(item.refType||'').toUpperCase())
+}
 export function notificationTarget(
   item: {id:number;refType?:string;refId?:number|string;regionId?:number|string|null},
   manager:boolean,
@@ -8,6 +12,7 @@ export function notificationTarget(
   historyPath:string,
 ):RouteLocationRaw {
   const id=Number(item.refId), type=String(item.refType || '').toUpperCase()
+  if(isWebOnlyNotification(item,manager,currentPath))return {path:'/admin-app/notifications',query:{notification:String(item.id)}}
   const mobile=currentPath.startsWith('/customer-app/')
   const target=(path:string)=>manager?managerAppPath(path,currentPath):path
   const detail=(path:string)=>({path:target(path),query:{id:String(id)}})

@@ -29,6 +29,7 @@ import DeadlineTimer from '../components/DeadlineTimer.vue'
 import FaqAccordion from '../components/FaqAccordion.vue'
 import BackendLayout from '../components/BackendLayout.vue'
 import ServiceFields from '../components/ServiceFields.vue'
+import CompactFilters, { type FilterChip, type FilterOption } from '../components/CompactFilters.vue'
 import {
   backendResources,
   resourceRoutes,
@@ -829,6 +830,31 @@ function navigatePage(next: number) {
   page.value = next
   void load()
 }
+// 관리자 앱의 차량 기록 화면(OCR·판별 대기·입출구 로그): 검색창 + 칩만 보이고 나머지 조건은 접어 둔다
+const compactRecordFilters = computed(() => appPage.value && ['ocr', 'reviews', 'transits'].includes(resourceId.value))
+const compactChips = computed<FilterChip[]>(() => {
+  const chips: FilterChip[] = []
+  for (const field of resource.value?.filters || []) {
+    if (field.key === 'carNum' || field.key === 'startDate' || field.key === 'endDate') continue
+    const options = (choices[field.key] || field.options?.map(([value, label]) => ({ value, label })) || []) as FilterOption[]
+    // 담당 지역이 하나뿐이면 고를 게 없으므로 칩을 두지 않는다
+    if (field.key === 'regionId' && options.length <= 1) continue
+    chips.push({ key: field.key, label: field.label, options: [{ value: '', label: '전체' }, ...options], value: String(filters[field.key] ?? '') })
+  }
+  chips.push({ key: 'period', label: '기간', kind: 'range', from: String(filters.startDate || ''), to: String(filters.endDate || '') })
+  return chips
+})
+function pickCompactFilter(key: string, value: string) {
+  filters[key] = value
+  if (key === 'regionId') filters.underpassId = ''
+  if (key === 'underpassId') syncRecordRegion()
+  search()
+}
+function pickCompactRange(_key: string, from: string, to: string) {
+  filters.startDate = from
+  filters.endDate = to
+  search()
+}
 function resetRecordFilters() {
   for(const field of resource.value.filters||[]) {
     if(field.key==='reviewStatus'&&resourceId.value==='reviews')continue
@@ -1219,6 +1245,16 @@ defineExpose({ open, load })
           <button v-for="[value,label] in [['','전체'],...(resource.filters?.[0]?.options||[])]" :key="value" type="button" :aria-pressed="String(filters[resourceId==='reasons'?'type':'category']||'')===value" @click="filters[resourceId==='reasons'?'type':'category']=value;search()">{{label}}</button>
         </nav>
       </div>
+      <CompactFilters
+        v-else-if="compactRecordFilters"
+        v-model:search="filters.carNum"
+        search-label="차량 번호 검색"
+        :chips="compactChips"
+        :busy="loading"
+        @submit="search"
+        @select="pickCompactFilter"
+        @range="pickCompactRange"
+      />
       <form
         v-else-if="!underpassSplit&&(resource.parents?.length||resource.filters?.length)"
         class="service-filters filters"

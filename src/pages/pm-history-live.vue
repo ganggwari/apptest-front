@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppPagination from '../components/AppPagination.vue'
+import CompactFilters, { type FilterChip } from '../components/CompactFilters.vue'
 import { adminPageTitle } from '../data/adminTitles'
 import { managerAppPath } from '../utils/manager-app-path'
 const appPath = (path: string) => managerAppPath(path, route.path)
@@ -157,6 +158,21 @@ function change(row: Action) {
   if (row.scoreBefore == null || row.scoreAfter == null) return null
   return Number(row.scoreAfter) - Number(row.scoreBefore)
 }
+// 관리자 앱: 기간 버튼 한 줄만 보이고 종류·설비·직접 입력은 칩으로 접어 둔다
+const isApp = computed(() => route.path.startsWith('/admin-app/'))
+const compactChips = computed<FilterChip[]>(() => [
+  { key: 'type', label: '종류', options: [{ value: '', label: '전체 종류' }, ...Object.entries(PM_TYPES).map(([value, label]) => ({ value, label: String(label) }))], value: type.value },
+  { key: 'equipId', label: '설비', options: [{ value: '', label: '전체 설비' }, ...equipmentOptions.value.map(e => ({ value: String(e.equipId), label: `${e.name} · ${pmLabel(PM_TYPES, e.type)} · ${e.underpassName}` }))], value: equipId.value },
+  { key: 'range', label: '직접 입력', kind: 'range', from: startDate.value, to: endDate.value },
+])
+function pickCompact(key: string, value: string) {
+  if (key === 'type') type.value = value
+  else if (key === 'equipId') equipId.value = value
+}
+function pickCompactRange(_key: string, from: string, to: string) {
+  startDate.value = from
+  endDate.value = to
+}
 function resetFilters() {
   setRange(-6)
   type.value = ''
@@ -179,7 +195,23 @@ function resetFilters() {
         </div>
       </div>
 
-      <section class="card pm-filter-card" aria-label="조회 조건">
+      <section v-if="isApp" class="pm-compact-filter" aria-label="조회 조건">
+        <div class="pm-range">
+          <button
+            v-for="[label,days] in ranges"
+            :key="label"
+            type="button"
+            class="btn sm"
+            :class="{'is-current':currentRange===days}"
+            @click="setRange(days)"
+          >
+            {{label}}
+          </button>
+        </div>
+        <CompactFilters :chips="compactChips" @select="pickCompact" @range="pickCompactRange" />
+        <p v-if="dateError" class="pm-date-error" role="alert">{{dateError}}</p>
+      </section>
+      <section v-else class="card pm-filter-card" aria-label="조회 조건">
         <div class="pm-filter-row">
           <span class="pm-filter-label">기간</span>
           <div class="pm-range">
@@ -303,4 +335,7 @@ function resetFilters() {
 .pm-table .pm-up { color: var(--danger, #c0392b); }
 .pm-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 12px 0; }
 .pm-note { font-size: 13px; margin: 10px 0 0; color: var(--ink-sub, #5b6573); }
+.pm-compact-filter { display:flex; flex-direction:column; gap:8px; margin:0 0 10px; }
+.pm-compact-filter .pm-range { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; }
+.pm-compact-filter .pm-range .btn { flex:none; white-space:nowrap; }
 </style>

@@ -2311,7 +2311,7 @@ onBeforeUnmount(() => {
                 >엷은 점선: 최근 관측값을 현재까지 유지 (추가 관측 아님)</p
               ><p v-if="forecastError" class="sub">{{forecastError}}</p></div
             >
-      <RouterLink v-if="appMap" :to="'/customer-app/screen-6?id='+selected.id"
+      <RouterLink v-if="appMap&&!detailSheet" :to="'/customer-app/screen-6?id='+selected.id"
               >상세 화면 보기 →</RouterLink
             ><div class="sub app-guidance"
               >시간대별 예보·길 안내는 <b>앱</b>에서 확인해요. <RouterLink to="/info/app-guide#install">앱 다운로드 →</RouterLink></div

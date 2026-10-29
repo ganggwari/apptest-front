@@ -4,7 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { asPage, backend, queryString } from '../services/backend'
 import { useCustomerNotifications, notificationCategory, type CustomerNotification } from '../stores/customerNotifications'
 import { useManagerNotifications } from '../stores/managerNotifications'
-import { notificationTarget } from '../utils/notification-target'
+import { isWebOnlyNotification, notificationTarget } from '../utils/notification-target'
 import { displayDate } from '../utils/display-date'
 import { valueLabels } from '../data/backendResources'
 const props = defineProps<{ manager?: boolean }>()
@@ -17,6 +17,7 @@ function move(id: number | null) {
 }
 let controller: AbortController | undefined
 const related = computed(() => item.value ? notificationTarget(item.value, !!props.manager, route.path, route.path) : null)
+const webOnly = computed(() => !!item.value && isWebOnlyNotification(item.value, !!props.manager, route.path))
 const hasRelated = computed(() => related.value && typeof related.value === 'object' && 'path' in related.value && related.value.path !== route.path)
 function back() { void router.push({ path: route.path, query: { ...route.query, notification: undefined } }) }
 async function load() {
@@ -80,6 +81,7 @@ onBeforeUnmount(() => controller?.abort())
         <p class="notification-detail-time"><span>수신 시각</span><time :datetime="item.createdAt">{{displayDate(item.createdAt)}}</time></p>
       </header>
       <p class="notification-detail-body">{{item.body||'추가 안내 내용이 없습니다.'}}</p>
+      <p v-if="webOnly" class="notification-detail-web-only" role="note">이 알림은 앱에서 처리할 수 없어요. <b>웹 관리자 페이지</b>에서 확인해 주세요.</p>
       <footer v-if="hasRelated&&related" class="notification-detail-footer"><RouterLink :to="related" class="notification-detail-related">관련 내용 확인 <span aria-hidden="true">→</span></RouterLink></footer>
     </article>
     <nav v-if="item" class="notification-detail-navigation" aria-label="알림 이동">
@@ -102,6 +104,7 @@ onBeforeUnmount(() => controller?.abort())
 .notification-detail-time>span { font-weight:600; }
 #app .notification-detail-body { margin:0; padding:22px 20px 26px; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--r-ink); line-height:1.85; font-size:14px; }
 .notification-detail-footer { margin-top:auto; padding:0 20px 20px; }
+.notification-detail-web-only { margin:0 20px 16px; padding:12px 14px; border:1px solid var(--r-line,#dce7f2); border-radius:10px; background:var(--r-soft,#f5f8fc); color:var(--r-ink,#172e49); font-size:13px; line-height:1.6; }
 #app .notification-detail-related { box-sizing:border-box; display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:44px; padding:12px 14px; border:1px solid var(--r-accent); border-radius:10px; background:var(--r-primary); color:var(--r-on-brand,#fff); font-size:13px; font-weight:650; line-height:1.5; text-decoration:none; }
 #app .notification-detail-related:hover { filter:brightness(1.08); }
 #app .notification-detail-card>.notification-detail-body { flex:1; display:flex; align-items:center; justify-content:flex-start; text-align:left; }

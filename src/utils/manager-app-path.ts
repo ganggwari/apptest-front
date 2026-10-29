@@ -8,8 +8,6 @@ const appPaths: Record<string, string> = {
   '/pm-settings': '/admin-app/pm-settings',
   '/pm-daily': '/admin-app/pm-daily',
   '/admin-data/ocr': '/admin-app/ocr',
-  '/admin-data/notices': '/admin-app/notices',
-  '/admin-data/inquiries': '/admin-app/inquiries',
 }
 
 export function managerAppPath(path: string, currentPath: string): string {
