@@ -391,7 +391,6 @@ function stopNavigation(resetArrival = true) {
   requested.value = false
   userOverlay?.setMap(null)
   userOverlay = undefined
-  resetRotatedHost()
   if (speechSupported && voice.value) speechSynthesis.cancel()
   if (resetArrival) arrived.value = false
 }
@@ -495,84 +494,6 @@ async function simulateClosure() {
   }
   finally {busy.value=false}
 }
-// ── 진행 방향이 항상 화면 위쪽이 되도록 지도를 회전한다 ──
-// 카카오 지도 SDK 는 회전을 지원하지 않으므로, 지도 요소를 내 위치 점을 중심으로 충분히 크게 만들고 CSS 로 돌린다.
-let navAngle = 0, // 누적(unwrapped) 회전각. 항상 최단 방향으로 돌도록 보정한다.
-  navHeading: number | null = null,
-  lastFix: Point | null = null,
-  gpsHeading: number | null = null,
-  hostKey = ''
-function bearingOf(a: Point, b: Point) {
-  const rad = Math.PI / 180,
-    dLng = (b.lng - a.lng) * rad,
-    la = a.lat * rad,
-    lb = b.lat * rad
-  const y = Math.sin(dLng) * Math.cos(lb),
-    x = Math.cos(la) * Math.sin(lb) - Math.sin(la) * Math.cos(lb) * Math.cos(dLng)
-  return ((Math.atan2(y, x) / rad) + 360) % 360
-}
-function turnTo(heading: number) {
-  const target = -heading
-  navAngle += ((target - navAngle + 540) % 360) - 180
-}
-function updateHeading(point: Point) {
-  let heading: number | null = null
-  if (gpsHeading !== null && Number.isFinite(gpsHeading)) heading = gpsHeading
-  else if (!lastFix) { lastFix = point; return }
-  else if (distanceMeters(lastFix, point) >= 5) heading = bearingOf(lastFix, point)
-  if (heading === null) return
-  lastFix = point
-  navHeading = navHeading === null ? heading : (navHeading + ((((heading - navHeading + 540) % 360) - 180) * 0.6) + 360) % 360
-  turnTo(navHeading)
-}
-function initialHeading() {
-  const path = routePath.value
-  if (path.length < 2) return
-  const start = path[0]!
-  const next = path.find((q) => distanceMeters(start, q) >= 15) ?? path[path.length - 1]!
-  navHeading = bearingOf(start, next)
-  navAngle = 0
-  turnTo(navHeading)
-}
-function layoutRotatedHost(point: any) {
-  const host = mapHost.value, wrap = host?.parentElement
-  if (!host || !wrap || !map) return
-  const box = wrap.getBoundingClientRect(),
-    guidance = wrap.closest('.navigation-body')?.querySelector('.navigation-guidance')?.getBoundingClientRect(),
-    summary = wrap.closest('.navigation-body')?.querySelector('.navigation-summary')?.getBoundingClientRect()
-  const top = Math.max(box.top, guidance?.bottom ?? box.top) + 20,
-    bottom = Math.min(box.bottom, summary?.top ?? box.bottom) - 20,
-    py = bottom > top ? (top + bottom) / 2 - box.top : box.height / 2,
-    px = box.width / 2
-  const radius = Math.max(Math.hypot(px, py), Math.hypot(box.width - px, py), Math.hypot(px, box.height - py), Math.hypot(box.width - px, box.height - py))
-  const size = Math.ceil(radius * 2)
-  const key = `${Math.round(box.width)}x${Math.round(box.height)}:${Math.round(py)}:${size}`
-  wrap.classList.add('nav-rotating')
-  if (key !== hostKey) {
-    hostKey = key
-    Object.assign(host.style, {
-      position: 'absolute', width: `${size}px`, height: `${size}px`,
-      left: `${px - size / 2}px`, top: `${py - size / 2}px`, transformOrigin: '50% 50%',
-    })
-    map.relayout()
-  }
-  host.style.transition = 'transform .45s linear'
-  host.style.transform = `rotate(${navAngle}deg)`
-  map.setCenter(point)
-}
-function resetRotatedHost() {
-  const host = mapHost.value
-  host?.parentElement?.classList.remove('nav-rotating')
-  if (host) {
-    for (const k of ['position', 'width', 'height', 'left', 'top', 'transformOrigin', 'transition', 'transform'] as const) host.style[k] = ''
-  }
-  hostKey = ''
-  navHeading = null
-  lastFix = null
-  gpsHeading = null
-  navAngle = 0
-  if (map) { map.setDraggable?.(true); map.relayout() }
-}
 function followPosition() {
   if (!map || !position.value) return
   const point = new sdk.maps.LatLng(position.value.lat, position.value.lng)
@@ -586,10 +507,24 @@ function followPosition() {
       })
     else userOverlay.setPosition(point)
   }
-  updateHeading(position.value)
   if (following.value) {
     if (drivingMode.value === 'gps') map.setLevel(3)
-    layoutRotatedHost(point)
+    map.setCenter(point)
+    // Keep the moving dot in the visible space between the guidance and bottom sheet.
+    const host = mapHost.value?.getBoundingClientRect()
+    const body = mapHost.value?.closest('.navigation-body')
+    const guidance = body?.querySelector('.navigation-guidance')?.getBoundingClientRect()
+    const summary = body?.querySelector('.navigation-summary')?.getBoundingClientRect()
+    const projection = map.getProjection?.()
+    if (host && projection?.coordsFromContainerPoint && sdk.maps.Point) {
+      const top = Math.max(host.top, guidance?.bottom ?? host.top) + 20
+      const bottom = Math.min(host.bottom, summary?.top ?? host.bottom) - 20
+      if (bottom > top) {
+        const targetY = (top + bottom) / 2 - host.top
+        const center = projection.coordsFromContainerPoint(new sdk.maps.Point(host.width / 2, host.height - targetY))
+        map.setCenter(center)
+      }
+    }
   }
 }
 function startNavigation() {
@@ -599,8 +534,6 @@ function startNavigation() {
   position.value = null
   following.value = true
   editing.value = false
-  map?.setDraggable?.(false)
-  initialHeading()
   if (drivingMode.value === 'demo') {
     if (timeline.value.total <= 0) {
       gpsError.value = '시연할 수 있는 경로가 없습니다. 경로를 다시 조회해 주세요.'
@@ -628,7 +561,6 @@ function startNavigation() {
         speed: fix.coords.speed,
       }
       gpsError.value = ''
-      gpsHeading = fix.coords.heading !== null && Number.isFinite(fix.coords.heading) && (fix.coords.speed ?? 0) > 1 ? fix.coords.heading : null
       followPosition()
       if (
         destination.value &&
@@ -763,7 +695,6 @@ onMounted(async () => {
       if (requested.value) followPosition()
     })
     resize.observe(mapHost.value)
-    if (mapHost.value.parentElement) resize.observe(mapHost.value.parentElement)
     draw()
   } catch (e) {
     mapError.value = (e as Error).message
