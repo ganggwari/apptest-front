@@ -28,11 +28,11 @@ const messaging=firebase.messaging();
 messaging.onBackgroundMessage(payload=>{
  if(payload.notification)return;
  const data=payload.data||{};
- return self.registration.showNotification(data.title||'PUF 새 알림',{body:data.body||'',tag:data.notificationId||'puf-fcm',data:{url:data.url||(data.category?'/admin-app/notifications':'/my-alerts')}});
+ return self.registration.showNotification(data.title||'PUF 새 알림',{body:data.body||'',tag:data.notificationId||'puf-fcm',data:{url:data.url||(data.category?'/admin-app/notifications':'/customer-app/screen-12')}});
 });
 self.addEventListener('notificationclick',event=>{
  event.notification.close();
- const target=event.notification.data?.url||'/my-alerts';
+ const target=event.notification.data?.url||'/customer-app/screen-12';
  const url=new URL(target,self.location.origin);
  if(url.origin!==self.location.origin)return;
  event.waitUntil((async()=>{

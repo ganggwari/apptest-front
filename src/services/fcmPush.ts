@@ -52,7 +52,7 @@ async function messaging(): Promise<any> {
         const body = payload.notification?.body || payload.data?.body || ''
         if (Notification.permission === 'granted' && document.visibilityState !== 'visible') {
           void navigator.serviceWorker.ready.then((registration) => registration.showNotification(title, {
-            body, tag: payload.data?.notificationId || 'puf-fcm', data: { url: payload.data?.url || (payload.data?.category ? '/admin-app/notifications' : '/my-alerts') },
+            body, tag: payload.data?.notificationId || 'puf-fcm', data: { url: payload.data?.url || (payload.data?.category ? '/admin-app/notifications' : '/customer-app/screen-12') },
           }))
         }
       })

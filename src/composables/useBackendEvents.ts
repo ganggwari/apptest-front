@@ -5,6 +5,7 @@ import { useApp } from '../stores/app'
 import { backend } from '../services/backend'
 import { apiUrl } from '../services/apiOrigin'
 import { reportSse } from '../runtime/connStatus'
+import { getAuthToken } from '../services/authToken'
 
 export type BackendEvent = { name: string; data: Record<string, any> }
 
@@ -149,9 +150,12 @@ export function useBackendStream() {
           ? '/api/admin/stream'
           : '/api/stream'
 
-      const source = new EventSource(apiUrl(endpoint), {
-        withCredentials: true,
-      })
+      // 쿠키가 막히는 iOS Safari 를 위해 로그인 토큰을 쿼리로도 보낸다 (EventSource 는 헤더를 못 붙인다)
+      const authToken = getAuthToken()
+      const source = new EventSource(
+        apiUrl(endpoint) + (authToken ? `?access_token=${encodeURIComponent(authToken)}` : ''),
+        { withCredentials: true },
+      )
 
       const id = ++nextConnectionId
 

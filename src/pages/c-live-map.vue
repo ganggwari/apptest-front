@@ -512,7 +512,12 @@ function showAppMapPopup(node: HTMLElement, position: any, kind: 'facility' | 'c
 }
 watch(selectedId, value => { if (!value) removeAppMapPopup('facility') })
 let overlays: any[] = []
-let markers: { id: string; marker: any; click: () => void }[] = []
+let markers: { id: string; marker: any; click: () => void; key: string; title: string }[] = []
+// 지도 다시 그리기 최적화: 마커 구성(좌표·표시 대상)이 같으면 마커를 새로 만들지 않고 바뀐 것만 갱신한다.
+// SSE 이벤트마다 마커를 전부 지웠다 다시 만들면 열려 있던 마커 모음(클러스터) 팝업이 닫히기 때문이다.
+let drawnMode: '' | 'overview' | 'markers' = ''
+let drawnKey = ''
+let drawnPopupKey = ''
 watch(
   () => selectedId.value,
   async (id) => {
@@ -1436,6 +1441,9 @@ function styleClusters(clusters: any[]) {
   }
 }
 function removeMarkers() {
+  drawnMode = ''
+  drawnKey = ''
+  drawnPopupKey = ''
   styledClusters = []
   clusterer?.clear()
   for (const { marker, click } of markers) {
@@ -1530,13 +1538,81 @@ async function selectCluster(cluster: any) {
   clusterPopupOpen = true
   maps.event.preventMap?.()
 }
+function markerAppearance(row: Facility) {
+  const state = stateLabel(row)
+  const assigned = !props.manager || ownsFacility(row)
+  const isSelected = selectedId.value === row.id
+  return {
+    state,
+    assigned,
+    isSelected,
+    key: `${state}|${assigned}|${isSelected}`,
+    title: `${row.name}${props.manager ? (assigned ? ' \u00b7 \ub2f4\ub2f9 \uc2dc\uc124' : ' \u00b7 \ub2f4\ub2f9 \uc678 \uc2dc\uc124') : ''} \u00b7 ${state}`,
+  }
+}
+// 선택 시설의 팝업을 다시 열어야 하는지 판단하는 키 (선택 시설이 바뀌거나 그 시설의 단계가 바뀔 때만 달라진다)
+function popupKeyOf(): string {
+  const row = selected.value
+  return selectedId.value ? `${selectedId.value}|${row ? stateLabel(row) : ''}` : ''
+}
+function updateMarkersInPlace(): boolean {
+  let changed = false
+  for (const item of markers) {
+    const row = facilities.value.find((f) => f.id === item.id)
+    if (!row) return false
+    const a = markerAppearance(row)
+    if (item.key !== a.key) {
+      item.marker.setImage(markerImage(a.state, a.assigned, a.isSelected))
+      item.marker.setZIndex(a.isSelected ? 12 : markerStyle(a.state).zIndex)
+      item.key = a.key
+      changed = true
+    }
+    if (item.title !== a.title) {
+      item.marker.setTitle(a.title)
+      item.title = a.title
+    }
+  }
+  // 마커 색이 바뀐 경우에만 클러스터 색을 다시 계산한다 (열려 있는 마커 모음 팝업은 건드리지 않는다)
+  if (changed) clusterer?.redraw()
+  const popupKey = popupKeyOf()
+  if (popupKey !== drawnPopupKey) {
+    drawnPopupKey = popupKey
+    infoWindow.close()
+    openSelectedPopup()
+  }
+  return true
+}
 function drawMap() {
   if (!map) return
+  const overview = !regionId.value && !query.value && !selectedId.value && !legendFilter.value
+  let nextKey = ''
+  if (overview) {
+    const key = [
+      loaded.value,
+      !!listError.value,
+      !!statusError.value,
+      ...regions.map((region) => {
+        const rows = facilities.value.filter((f) => f.regionId === region.id)
+        const blocked = rows.filter((f) => stateLabel(f) === '\ud1b5\uc81c').length
+        const unknown = rows.filter((f) => !['\uc815\uc0c1', '\uc8fc\uc758', '\ud1b5\uc81c'].includes(stateLabel(f))).length
+        return `${region.id}:${rows.length}:${blocked}:${unknown}`
+      }),
+    ].join('|')
+    if (drawnMode === 'overview' && drawnKey === key) return
+    nextKey = key
+  } else {
+    const rows = filtered.value.filter((f) => f.latitude !== null && f.longitude !== null)
+    const key = rows.map((f) => `${f.id}@${f.latitude},${f.longitude}`).join(';')
+    if (drawnMode === 'markers' && drawnKey === key && markers.length === rows.length && updateMarkersInPlace()) return
+    nextKey = key
+  }
   infoWindow.close()
   clusterInfoWindow?.close()
   clusterPopupOpen = false
   removeMarkers()
-  if (!regionId.value && !query.value && !selectedId.value && !legendFilter.value) {
+  drawnMode = overview ? 'overview' : 'markers'
+  drawnKey = nextKey
+  if (overview) {
     for (const region of regions) {
       const rows = facilities.value.filter((f) => f.regionId === region.id)
       const blocked = rows.filter((f) => stateLabel(f) === '통제').length
@@ -1596,20 +1672,26 @@ function drawMap() {
   } else {
     for (const row of filtered.value) {
       if (row.latitude === null || row.longitude === null) continue
-      const state = stateLabel(row)
+      const a = markerAppearance(row)
       const marker = new maps.Marker({
         map,
         position: new maps.LatLng(row.latitude, row.longitude),
-        title: `${row.name}${props.manager ? (ownsFacility(row) ? ' · 담당 시설' : ' · 담당 외 시설') : ''} · ${state}`,
-        image: markerImage(state, !props.manager || ownsFacility(row), selectedId.value === row.id),
-        zIndex: selectedId.value === row.id ? 12 : markerStyle(state).zIndex,
+        title: a.title,
+        image: markerImage(a.state, a.assigned, a.isSelected),
+        zIndex: a.isSelected ? 12 : markerStyle(a.state).zIndex,
       })
-      const click = () => selectFacility(row)
+      // 마커를 재사용하므로 클릭 시점의 최신 시설 정보를 다시 찾아 쓴다
+      const id = row.id
+      const click = () => {
+        const current = facilities.value.find((f) => f.id === id)
+        if (current) selectFacility(current)
+      }
       maps.event.addListener(marker, 'click', click)
-      markers.push({ id: row.id, marker, click })
+      markers.push({ id: row.id, marker, click, key: a.key, title: a.title })
     }
     clusterer?.clear()
     clusterer?.addMarkers(markers.map((m) => m.marker))
+    drawnPopupKey = popupKeyOf()
     openSelectedPopup()
   }
 }

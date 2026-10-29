@@ -1,3 +1,4 @@
+import { installAuthFetch } from './runtime/authFetch'
 import { installDemoSwitcher } from './runtime/demoSwitcher'
 import { installConnStatus } from './runtime/connStatus'
 import { registerPwa } from './runtime/pwa'
@@ -46,6 +47,7 @@ import './styles/dark-chart-glow.css'
 import './styles/admin-web-workspace.css'
 import './styles/admin-web-sections.css'
 import './styles/customer-mobile-polish.css'
+installAuthFetch()
 createApp(App)
   .component('PasswordInput', PasswordInput)
   .component('UiIcon', UiIcon)
