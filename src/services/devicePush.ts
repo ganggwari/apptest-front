@@ -21,6 +21,8 @@ export async function registerPushToken(value?:PushToken) {
 }
 export async function detachPushToken() {
   const base=pushTokenBase()
-  if(current&&base)await backend(base+queryString({token:current.token}),{method:'DELETE'})
-  registeredOwner=''
+  const detaching=current
+  // 해제한 토큰은 잊는다: 그렇지 않으면 SSE 재연결·계정 변경 때 브리지가 같은 토큰을 다시 등록해 알림이 되살아난다
+  current=undefined;registeredOwner=''
+  if(detaching&&base)await backend(base+queryString({token:detaching.token}),{method:'DELETE'})
 }

@@ -89,13 +89,28 @@ export async function enableFcm(role: Role, id: string, requestPermission = fals
   return true
 }
 export async function disableFcm(role: Role) {
-  try {
-    await detachPushToken()
-  } catch {
-    // 토큰 해제 실패가 로그아웃·알림 끄기를 막지 않게 한다
-    const base = endpoint(role)
-    if (currentToken) await backend(base + '?token=' + encodeURIComponent(currentToken), { method: 'DELETE' }).catch(() => {})
+  // 앱을 다시 열어 이 화면에서 아직 토큰을 기억하지 못하는 경우가 있으므로, 끌 때 브라우저의 실제 FCM 토큰을 직접 확인한다.
+  // (기억하는 토큰이 없으면 서버 등록을 해제하지 못해 껐는데도 알림이 계속 오던 문제의 원인이 된다)
+  let instance: any = null
+  let token = currentToken
+  if ('Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+    try {
+      instance = await messaging()
+      if (!token) {
+        const registration = await navigator.serviceWorker.getRegistration('/')
+        if (registration) token = await instance.getToken({ vapidKey, serviceWorkerRegistration: registration })
+      }
+    } catch {
+      // Firebase 를 못 불러와도 서버 쪽 해제는 계속 시도한다
+    }
   }
+  if (token) {
+    // 서버에 등록된 이 기기 토큰을 사용 중지한다 (반대 역할 쪽에 남은 등록은 아래 토큰 폐기로 끊긴다)
+    await backend(endpoint(role) + '?token=' + encodeURIComponent(token), { method: 'DELETE' }).catch(() => {})
+  }
+  try { await detachPushToken() } catch { /* 토큰 해제 실패가 로그아웃·알림 끄기를 막지 않게 한다 */ }
+  // FCM 토큰 자체를 폐기한다: 서버 등록이 어떻게 남아 있든 이 기기로는 더 이상 푸시가 오지 않고, 다시 켜면 새 토큰이 발급된다
+  try { await instance?.deleteToken() } catch { /* 이미 없거나 지원하지 않으면 무시 */ }
   currentToken = ''
   lastOwner = ''
   localStorage.removeItem(ownerKey)

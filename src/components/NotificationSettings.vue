@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { backend } from '../services/backend'
-import { enableFcm, disableFcm, setFcmOptOut } from '../services/fcmPush'
+import { enableFcm, disableFcm, isFcmActive, setFcmOptOut } from '../services/fcmPush'
 import { useApp } from '../stores/app'
 import { useCustomerNotifications } from '../stores/customerNotifications'
 const app = useApp()
@@ -14,6 +14,17 @@ const notifications = useCustomerNotifications(),
 const supported = 'Notification' in window,
   permission = ref(supported ? Notification.permission : 'unsupported')
 const controller = new AbortController()
+// 스위치 상태는 실제 푸시 연결(권한 허용 + 이 기기가 내 계정에 등록됨)을 기준으로 한다.
+// 앱을 다시 설치했거나 로그인 때 자동 연결된 경우에도 실제 상태와 스위치가 어긋나지 않는다.
+const fcmTick = ref(0)
+const pushOn = computed(() => {
+  void fcmTick.value
+  return supported && !!app.account && app.account.role === 'customer' && isFcmActive('customer', String(app.account.id))
+})
+function syncSwitch() {
+  permission.value = supported ? Notification.permission : 'unsupported'
+  fcmTick.value++
+}
 async function load() {
   loading.value = true
   error.value = ''
@@ -31,27 +42,25 @@ async function toggle() {
   busy.value = true
   message.value = ''
   try {
-    if (notifications.browserEnabled) {
-      if (app.account?.role === 'customer') { await disableFcm('customer'); setFcmOptOut('customer', String(app.account.id), true) }
+    if (pushOn.value) {
+      await disableFcm('customer')
+      setFcmOptOut('customer', String(app.account!.id), true)
       notifications.setBrowserEnabled(false)
-      message.value = '이 브라우저의 새 알림을 껐습니다.'
+      message.value = '이 기기의 푸시 알림을 껐습니다.'
       return
     }
     if (!supported) {
       message.value = '이 브라우저는 알림을 지원하지 않습니다.'
       return
     }
-    const result = await Notification.requestPermission()
-    permission.value = result
-    if (result !== 'granted') {
-      message.value =
-        result === 'denied'
-          ? '브라우저의 사이트 설정에서 알림 권한을 허용해 주세요.'
-          : '알림 권한을 허용하면 새 알림을 받을 수 있습니다.'
+    if (!app.account || app.account.role !== 'customer') throw new Error('고객 로그인이 필요합니다.')
+    if (Notification.permission === 'denied') {
+      permission.value = 'denied'
+      message.value = '브라우저의 사이트 설정에서 알림 권한을 허용해 주세요.'
       return
     }
-    if (!app.account || app.account.role !== 'customer') throw new Error('고객 로그인이 필요합니다.')
-    await enableFcm('customer', app.account.id)
+    // 권한이 아직 없으면 이 클릭에서 바로 묻는다(허용돼 있으면 묻지 않고 바로 연결한다)
+    await enableFcm('customer', String(app.account.id), Notification.permission !== 'granted')
     setFcmOptOut('customer', String(app.account.id), false)
     notifications.setBrowserEnabled(true)
     await load()
@@ -60,32 +69,38 @@ async function toggle() {
     message.value = (e as Error).message || 'FCM 등록에 실패했습니다.'
   } finally {
     busy.value = false
+    syncSwitch()
   }
 }
 onMounted(() => {
   void notifications.refresh()
   void load()
+  syncSwitch()
+  window.addEventListener('routel:push-device-updated', syncSwitch)
 })
-onBeforeUnmount(() => controller.abort())
+onBeforeUnmount(() => {
+  controller.abort()
+  window.removeEventListener('routel:push-device-updated', syncSwitch)
+})
 </script>
 <template>
   <section class="notification-settings" aria-labelledby="notification-settings-title">
     <h2 id="notification-settings-title">알림 수신 설정</h2>
     <div class="notification-setting-row">
       <div>
-        <strong>이 브라우저 알림</strong>
-        <p>페이지를 열어 둔 동안 새 알림을 알려드립니다. 이 브라우저에만 적용됩니다.</p>
+        <strong>이 기기 푸시 알림</strong>
+        <p>앱을 닫아 둔 상태에서도 새 알림을 받습니다. 이 기기에만 적용됩니다.</p>
       </div>
       <button
         type="button"
         class="notification-setting-switch"
         role="switch"
-        :aria-checked="notifications.browserEnabled&&permission==='granted'"
-        aria-label="이 브라우저 알림"
+        :aria-checked="pushOn"
+        aria-label="이 기기 푸시 알림"
         :disabled="busy||!supported"
         @click="toggle"
       >
-        {{notifications.browserEnabled&&permission==='granted'?'켜짐':'꺼짐'}}
+        {{busy?'처리 중':pushOn?'켜짐':'꺼짐'}}
       </button>
     </div>
     <p v-if="permission==='denied'" class="notification-setting-help">알림 권한이 차단되어 있습니다. 주소창 옆 사이트 설정에서 허용할 수 있습니다.</p>
