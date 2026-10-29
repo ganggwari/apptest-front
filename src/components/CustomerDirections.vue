@@ -40,7 +40,7 @@ const routes = ref<Route[]>([]),
   busy = ref(false),
   error = ref(''),
   mapError = ref('')
-const safety = ref<SafetyRoute|null>(null), safetyDialog = ref<HTMLDialogElement>()
+const safety = ref<SafetyRoute|null>(null)
 const safetyUnavailable = computed(()=>!!safety.value?.mandatory&&!safety.value.detoured)
 const rerouting=ref(false)
 const demoIncident=ref(false)
@@ -52,21 +52,64 @@ function announce(message:string) {
   speechSynthesis.cancel()
   const utterance=new SpeechSynthesisUtterance(message);utterance.lang='ko-KR';speechSynthesis.speak(utterance)
 }
-async function showSafety() { await nextTick(); if(alive&&!safetyDialog.value?.open)safetyDialog.value?.showModal() }
-function acceptDetour() {
-  const running=requested.value||demoStartPending.value
-  if(safety.value?.suggestedDetour)chooseRoute(1)
-  safetyDialog.value?.close()
-  if(running&&!safetyUnavailable.value)startNavigation()
-  demoStartPending.value=false
-  announce('우회 경로로 안내합니다.')
+// 주행 중 안내 카드 아래에 뜨는 알림 카드.
+// control = 통제 지하차도 재탐색(잠깐 떴다가 사라짐), risk = 위험단계 상승 우회 추천(확인·취소 전까지 유지),
+// blocked = 안전한 우회 경로를 찾지 못함(닫기 전까지 유지)
+type RouteNotice = { id: number; kind: 'control' | 'risk' | 'blocked'; title: string; text: string }
+const NOTICE_SECONDS = 6
+const routeNotice = ref<RouteNotice | null>(null)
+let noticeTimer: ReturnType<typeof setTimeout> | undefined, noticeSeq = 0, declinedRiskKey = ''
+function dismissNotice() {
+  clearTimeout(noticeTimer)
+  routeNotice.value = null
 }
-function startSafeDetour(){
-  if(!safety.value?.detoured||safetyUnavailable.value||!active.value)return
-  safetyDialog.value?.close()
-  startNavigation()
-  demoStartPending.value=false
-  announce('통제 구간을 피해 우회 경로로 안내합니다.')
+function setNotice(notice: Omit<RouteNotice, 'id'>, autoDismiss = false) {
+  clearTimeout(noticeTimer)
+  const next = { ...notice, id: ++noticeSeq }
+  routeNotice.value = next
+  if (autoDismiss)
+    noticeTimer = setTimeout(() => { if (routeNotice.value?.id === next.id) routeNotice.value = null }, NOTICE_SECONDS * 1000)
+}
+// 같은 위험 상황을 사용자가 이미 취소·확인했으면 SSE 재연결 등으로 다시 조회해도 같은 카드를 또 띄우지 않는다
+const riskKey = (route: SafetyRoute) => (route.advisoryHazards || []).join('|') + (route.suggestedDetour ? '+detour' : '')
+function presentSafety() {
+  const result = safety.value
+  if (!result) return
+  if (result.mandatory) {
+    const blocked = result.blockedHazards?.length ? result.blockedHazards.join(' · ') : '경로상의 지하차도'
+    if (result.detoured)
+      setNotice({ kind: 'control', title: '통제 지하차도를 피해 경로를 재탐색했어요',
+        text: `${blocked} 통제 중 · 우회 경로로 안내합니다${demoIncident.value ? ' (시연 상황)' : ''}` }, true)
+    else
+      setNotice({ kind: 'blocked', title: '안전한 우회 경로를 찾지 못했어요',
+        text: result.message || `${blocked} 통제 중입니다. 현장 통제 안내를 따라 주세요.` })
+    return
+  }
+  if (!result.advisoryHazards?.length && !result.suggestedDetour) return
+  if (riskKey(result) === declinedRiskKey) return
+  const hazards = result.advisoryHazards?.length ? result.advisoryHazards.join(' · ') : '경로상의 지하차도'
+  const extra = result.suggestedDetour
+    ? ` · 우회 시 약 ${Math.max(1, Math.ceil(result.suggestedDetour.extraSec / 60))}분 더 걸려요` : ''
+  setNotice({ kind: 'risk', title: '전방 지하차도 위험단계가 올랐어요', text: `${hazards}${extra}` })
+}
+// 위험단계 상승 카드가 떠 있는 동안에는 시연 주행을 자동으로 시작하지 않고 선택을 기다린다
+const awaitingChoice = computed(() => routeNotice.value?.kind === 'risk')
+function acceptDetour() {
+  const running = requested.value || demoStartPending.value
+  const detour = !!safety.value?.suggestedDetour
+  if (!detour && safety.value) declinedRiskKey = riskKey(safety.value)
+  dismissNotice()
+  if (detour) chooseRoute(1)
+  if (running && !safetyUnavailable.value) startNavigation()
+  demoStartPending.value = false
+  if (detour) announce('우회 경로로 안내합니다.')
+}
+function keepRoute() {
+  const pending = demoStartPending.value
+  if (safety.value) declinedRiskKey = riskKey(safety.value)
+  dismissNotice()
+  demoStartPending.value = false
+  if (pending && active.value && !safetyUnavailable.value) startNavigation()
 }
 type Weather = {
   temperature: number | null
@@ -121,7 +164,9 @@ function draw() {
     )
   const bounds = new sdk.maps.LatLngBounds()
   path.forEach((p) => bounds.extend(p))
-  map.setBounds(bounds, 80, 40, 190, 40)
+  const sheet = summaryElement.value?.getBoundingClientRect().height || 0
+  const room = (mapHost.value?.clientHeight || 600) * 0.6
+  map.setBounds(bounds, 96, 40, Math.max(190, Math.min(sheet + 24, room)), 40)
   if (requested.value) followPosition()
 }
 function pickPlace(place: Place) {
@@ -186,11 +231,15 @@ async function loadInfo(place: Place, signal: AbortSignal) {
   infoLoading.value = false
 }
 async function search() {
+  declinedRiskKey=''
+  await runSearch()
+}
+async function runSearch() {
   demoStartPending.value=false
   demoIncident.value=false
   stopNavigation()
   safety.value=null
-  safetyDialog.value?.close()
+  dismissNotice()
   position.value = null
   controller?.abort()
   const current = new AbortController()
@@ -214,16 +263,17 @@ async function search() {
       const assessed=await navigationRequest<SafetyRoute>('route',{origin:coord(from),destination:coord(to)},current.signal)
       if(!alive||current.signal.aborted)return
       safety.value=assessed
-      if(assessed.mandatory&&!assessed.detoured){void showSafety();throw Error(assessed.message||'통제 지하차도를 피하는 경로를 찾지 못했습니다.')}
+      if(assessed.mandatory&&!assessed.detoured){presentSafety();throw Error(assessed.message||'통제 지하차도를 피하는 경로를 찾지 못했습니다.')}
       candidates=[safetyRouteCandidate(assessed)]
       if(assessed.suggestedDetour)candidates.push(safetyRouteCandidate(assessed.suggestedDetour))
-      if(assessed.mandatory||assessed.advisoryHazards?.length)void showSafety()
+      if(assessed.mandatory||assessed.advisoryHazards?.length)presentSafety()
     } else candidates=await navigationRequest<Route[]>('directions',{origin:coord(from),destination:coord(to)},current.signal)
     if (!candidates.length) throw Error('이 구간에서 자동차 경로를 찾지 못했습니다.')
     if (!alive || current.signal.aborted) return
     routes.value = candidates
     selected.value = 0
     editing.value = false
+    summaryExpanded.value = false
     await nextTick()
     draw()
   } catch (e) {
@@ -273,7 +323,7 @@ const summaryExpanded = ref(true)
 let summaryPointer: number | undefined, summaryStartY = 0, summaryDragged = false
 function startSummarySwipe(event: PointerEvent) {
   if (!event.isPrimary || event.button !== 0) return
-  const interactive = (event.target as Element).closest('button,input,select,textarea,a')
+  const interactive = (event.target as Element).closest('button,input,select,textarea,a,.navigation-route-card')
   if (interactive && !interactive.classList.contains('navigation-summary-handle')) return
   summaryPointer = event.pointerId
   summaryStartY = event.clientY
@@ -372,15 +422,44 @@ const arrivalTime = computed(() =>
 const filteredCameras = computed(() =>
   cameras.value.filter((item) => matchesKoreanSearch(item.name,cameraQuery.value)),
 )
-const turnIcon = computed(() =>
-  /좌회전|왼쪽/.test(currentGuide.value?.guidance || '')
-    ? '↰'
-    : /우회전|오른쪽/.test(currentGuide.value?.guidance || '')
-      ? '↱'
-      : /유턴/.test(currentGuide.value?.guidance || '')
-        ? '↶'
-        : '↑',
+const iconFor = (text = '') =>
+  /좌회전|왼쪽/.test(text) ? '↰' : /우회전|오른쪽/.test(text) ? '↱' : /유턴/.test(text) ? '↶' : '↑'
+const turnIcon = computed(() => iconFor(currentGuide.value?.guidance))
+// 안내 카드 아래 줄에 보여줄 "그 다음 안내"
+const followingGuide = computed(() => guides.value[guideIndex.value + 1])
+const followingDistance = computed(() => {
+  const here = guidePositions.value[guideIndex.value],
+    next = guidePositions.value[guideIndex.value + 1]
+  return here === undefined || next === undefined ? 0 : Math.max(0, next - here)
+})
+const tripPercent = computed(() =>
+  arrived.value
+    ? 100
+    : progress.value && requested.value
+      ? Math.min(100, Math.max(0, (progress.value.progress / Math.max(1, progress.value.total)) * 100))
+      : 0,
 )
+// 경로 후보 카드 표시용
+const routeMinutes = (route: Route) => Math.max(1, Math.ceil(route.summary.duration / 60))
+function routeName(index: number) {
+  if (safety.value) return index === 0 && !(safety.value.mandatory && safety.value.detoured) ? '추천' : '우회 경로'
+  return index === 0 ? '추천' : '대안'
+}
+function routeTag(index: number): { text: string; tone: 'info' | 'warn' } | null {
+  const result = safety.value
+  if (!result) return index === 0 ? { text: '실시간 최적 경로', tone: 'info' } : null
+  if (index === 0) {
+    if (result.mandatory && result.detoured) return { text: '통제 구간 회피', tone: 'warn' }
+    if (result.advisoryHazards?.length) return { text: '위험 구간 포함', tone: 'warn' }
+    return { text: '실시간 최적 경로', tone: 'info' }
+  }
+  const extra = result.suggestedDetour?.extraSec
+  return { text: extra ? `위험 구간 회피 · +${Math.max(1, Math.ceil(extra / 60))}분` : '위험 구간 회피', tone: 'warn' }
+}
+function tollText(route: Route) {
+  const toll = route.summary.fare?.toll
+  return toll === undefined ? '' : toll > 0 ? `통행료 ${toll.toLocaleString()}원` : '무료'
+}
 function stopNavigation(resetArrival = true) {
   cancelAnimationFrame(demoFrame)
   demoFrame = 0
@@ -454,7 +533,7 @@ async function startDemoTrip() {
   drivingMode.value='demo'
   await search()
   demoStartPending.value=!!active.value
-  if(active.value&&!safetyUnavailable.value&&!safetyDialog.value?.open){startNavigation();demoStartPending.value=false}
+  if(active.value&&!safetyUnavailable.value&&!awaitingChoice.value){startNavigation();demoStartPending.value=false}
 }
 async function simulateClosure() {
   if(drivingMode.value!=='demo'||!requested.value||!position.value||!destination.value||busy.value)return
@@ -487,7 +566,7 @@ async function simulateClosure() {
     routes.value=[candidate];selected.value=0
     demoIncident.value=true
     safety.value={distance:candidate.summary.distance,duration:candidate.summary.duration,path:routePoints(candidate).map(p=>[p.lat,p.lng]),guides:[],mandatory:true,detoured:true,blockedHazards:['전방 시연 구간'],advisoryHazards:[],passesHazards:[],message:'주행 중 통제가 발생한 시연 상황입니다. 실제 시설 통제에는 영향을 주지 않습니다.'}
-    await nextTick();draw();void showSafety()
+    await nextTick();draw();presentSafety();startNavigation();announce('통제 구간을 피해 우회 경로로 안내합니다.')
   } catch(e) {
     gpsError.value=(e as Error).message
     if(!wasPaused&&requested.value&&demoPaused.value)toggleDemoPause()
@@ -513,7 +592,7 @@ function followPosition() {
     // Keep the moving dot in the visible space between the guidance and bottom sheet.
     const host = mapHost.value?.getBoundingClientRect()
     const body = mapHost.value?.closest('.navigation-body')
-    const guidance = body?.querySelector('.navigation-guidance')?.getBoundingClientRect()
+    const guidance = body?.querySelector('.navigation-hud')?.getBoundingClientRect()
     const summary = body?.querySelector('.navigation-summary')?.getBoundingClientRect()
     const projection = map.getProjection?.()
     if (host && projection?.coordsFromContainerPoint && sdk.maps.Point) {
@@ -596,6 +675,14 @@ function chooseRoute(index: number) {
   selected.value = index
   draw()
 }
+function pressRouteButton(index: number) {
+  if (selected.value === index) startNavigation()
+  else chooseRoute(index)
+}
+function openRouteGuides(index: number) {
+  if (selected.value !== index) chooseRoute(index)
+  guideDialog.value?.showModal()
+}
 function editRoute() {
   stopNavigation()
   editing.value = true
@@ -610,7 +697,7 @@ async function reroute() {
     originText.value = '내 위치'
   }
   try {
-    const pending=search()
+    const pending=runSearch()
     announce('위험 정보를 반영해 경로를 재탐색합니다.')
     await pending
     if(running&&active.value&&!safetyUnavailable.value){startNavigation();announce('경로를 재탐색했습니다. 새 경로로 안내합니다.')}
@@ -664,7 +751,7 @@ useBackendEvents(({name,data})=>{
 watch(offRoute,(outside)=>{if(outside&&requested.value)announce('경로를 벗어났습니다. 경로 다시 찾기를 눌러 재탐색해 주세요.')})
 onBeforeUnmount(() => {
   clearTimeout(hazardTimer)
-  safetyDialog.value?.close()
+  clearTimeout(noticeTimer)
   stopNavigation()
   guideDialog.value?.close()
   cameraDialog.value?.close()
@@ -785,94 +872,128 @@ onBeforeUnmount(() => {
             ></ul
           ><p v-if="error" class="directions-error" role="alert">{{error}}</p></div></section
         >
-<button
-          v-else-if="!requested&&!arrived"
-          type="button"
-          class="navigation-trip"
-          @click="editRoute"
-          ><span>{{origin?.name}} → {{destination?.name}}</span
-          ><small>경로 변경</small></button
-        >
-<section
-          v-if="requested||arrived"
-          class="navigation-guidance"
-          aria-label="현재 주행 안내"
-          aria-live="polite"
-          ><span class="navigation-turn" aria-hidden="true">{{arrived?'✓':turnIcon}}</span
-          ><div
-            ><b
-              >{{arrived?'목적지에 도착했습니다':!position?'현재 위치 확인 중…':offRoute?'경로를 벗어났습니다':formatDistance(nextDistance)}}</b
-            ><p
-              >{{arrived?destination?.name:!position?'GPS 위치를 기다리고 있습니다.':offRoute?'현재 위치에서 경로를 다시 조회하세요.':currentGuide?.guidance||'목적지 방향으로 이동하세요.'}}</p
-            ><small v-if="position&&!arrived"
-              >{{currentGuide?.name}} · {{drivingMode==='demo' ? `시연 ${demoSpeed}배속${demoPaused?' · 일시정지':''}` : `위치 정확도 ${Math.round(position.accuracy)} m`}}</small
+<div v-if="!editing" class="navigation-hud"
+          ><button
+            v-if="!requested&&!arrived"
+            type="button"
+            class="navigation-trip"
+            @click="editRoute"
+            ><span>{{origin?.name}} → {{destination?.name}}</span
+            ><small>경로 변경</small></button
+          ><section
+            v-if="requested||arrived"
+            class="navigation-guidance"
+            aria-label="현재 주행 안내"
+            aria-live="polite"
+            ><div class="navigation-guidance-main"
+              ><span class="navigation-turn" aria-hidden="true">{{arrived?'✓':turnIcon}}</span
+              ><div
+                ><b
+                  >{{arrived?'목적지에 도착했습니다':!position?'현재 위치 확인 중…':offRoute?'경로를 벗어났습니다':formatDistance(nextDistance)}}</b
+                ><p
+                  >{{arrived?destination?.name:!position?'GPS 위치를 기다리고 있습니다.':offRoute?'현재 위치에서 경로를 다시 조회하세요.':currentGuide?.guidance||'목적지 방향으로 이동하세요.'}}</p
+                ><small v-if="position&&!arrived"
+                  >{{currentGuide?.name}} · {{drivingMode==='demo' ? `시연 ${demoSpeed}배속${demoPaused?' · 일시정지':''}` : `위치 정확도 ${Math.round(position.accuracy)} m`}}</small
+                ></div
+              ></div
+            ><div v-if="requested&&position&&!offRoute&&followingGuide" class="navigation-guidance-next"
+              ><span aria-hidden="true">{{iconFor(followingGuide.guidance)}}</span
+              ><b>{{formatDistance(followingDistance)}} 후 {{followingGuide.guidance}}</b
+              ><em>다음 안내</em></div
+            ></section
+          ><div class="navigation-notices"
+            ><div v-if="rerouting" class="navigation-notice is-busy" role="status"
+              ><span class="navigation-notice-icon" aria-hidden="true"><UiIcon name="refresh" /></span
+              ><div class="navigation-notice-body"><b>경로를 다시 찾고 있어요</b><small>통제·위험 정보를 반영하고 있어요.</small></div></div
+            ><div v-else-if="routeNotice" :key="routeNotice.id" class="navigation-notice" :class="'is-'+routeNotice.kind" :role="routeNotice.kind==='control'?'status':'alert'"
+              ><span class="navigation-notice-icon" aria-hidden="true"
+                ><svg v-if="routeNotice.kind==='risk'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 7v6"/><path d="M12 17h.01"/></svg
+                ><svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 2.8 19.5h18.4z"/><path d="M12 10v4.2"/><path d="M12 17h.01"/></svg
+              ></span
+              ><div class="navigation-notice-body"
+                ><b>{{routeNotice.title}}</b
+                ><small>{{routeNotice.text}}</small
+                ><div v-if="routeNotice.kind==='risk'" class="navigation-notice-actions"
+                  ><button v-if="safety?.suggestedDetour" type="button" @click="keepRoute">취소</button
+                  ><button type="button" class="primary" @click="acceptDetour">확인</button></div
+                ><div v-else-if="routeNotice.kind==='blocked'" class="navigation-notice-actions"
+                  ><button type="button" @click="dismissNotice">닫기</button
+                  ><button type="button" class="primary" :disabled="busy" @click="reroute">경로 다시 찾기</button></div
+                ></div
+              ></div
             ></div
-          ></section
+          ></div
         >
-<p v-if="rerouting" class="navigation-reroute-notice" role="status"><UiIcon name="refresh" />통제·위험 정보를 반영해 경로를 다시 찾고 있어요.</p>
 <p v-if="mapError" class="navigation-map-error" role="status">{{mapError}}</p
         ><p v-if="gpsError" class="navigation-gps-error" role="alert">{{gpsError}}</p>
 <section ref="summaryElement" v-if="active" class="navigation-summary directions-results" :class="{'summary-collapsed':!summaryExpanded}" aria-label="경로 결과"
           @pointerdown="startSummarySwipe" @pointerup="endSummarySwipe" @pointercancel="summaryPointer=undefined"
           ><button type="button" class="navigation-summary-handle" :aria-expanded="summaryExpanded" aria-label="주행 패널 접기·펼치기" @click="toggleSummary">
             <span aria-hidden="true"></span><small>{{summaryExpanded?'아래로 밀어 접기':'위로 밀어 펼치기'}}</small>
-          </button><div v-if="safety?.mandatory&&safety.detoured" class="navigation-detour-banner"><UiIcon name="route" /><div><strong>통제 구간을 피한 우회 경로</strong><small v-if="safety.blockedHazards?.length">{{safety.blockedHazards.join(' · ')}}</small></div><button type="button" @click="showSafety">안내 보기</button></div><div class="navigation-demo-controls">
-            <label>주행 방식
-              <select v-model="drivingMode" @change="changeDrivingMode">
-                <option value="gps">실제 GPS 안내</option>
-                <option value="demo">시연 주행</option>
-              </select>
-            </label>
-            <template v-if="drivingMode==='demo'">
-              <label>시연 배속
-                <select v-model.number="demoSpeed" aria-label="시연 배속">
-                  <option v-for="speed in [1,2,4,8,16]" :key="speed" :value="speed">{{speed}}배속</option>
-                </select>
-              </label>
-              <div v-if="requested" class="navigation-demo-actions"><button type="button" @click="toggleDemoPause">{{demoPaused?'시연 재개':'일시정지'}}</button>
-              <button type="button" :disabled="busy" @click="simulateClosure">{{busy?'우회 경로 조회 중…':'주행 중 통제 발생'}}</button></div>
-              <small v-if="demoIncident">통제 상황 시연 · 실제 시설 상태 유지</small>
-              <small>가상 위치 · 1배속 기준 시속 50km</small>
-            </template>
-          </div><div v-if="!requested&&!arrived" class="navigation-route-options"
-            ><button
-              v-for="(route,index) in routes"
-              :key="index"
-              type="button"
-              :aria-pressed="selected===index"
-              @click="chooseRoute(index)"
-              ><b>{{index===0?'추천':'대안'}} {{Math.ceil(route.summary.duration/60)}}분</b
-              ><span
-                >{{formatDistance(route.summary.distance)}} · 통행료 {{route.summary.fare?.toll?.toLocaleString()??'—'}}원</span
-              ></button
-            ></div
-          ><div class="navigation-arrival"
+          </button
+          ><ul v-if="!requested&&!arrived" class="navigation-route-list" aria-label="경로 후보"
+            ><li v-for="(route,index) in routes" :key="index"
+              ><div class="navigation-route-card" :class="{'is-selected':selected===index}" @click="chooseRoute(index)"
+                ><div class="navigation-route-info"
+                  ><span class="navigation-route-meta"
+                    ><b>{{routeName(index)}}</b
+                    ><span>{{formatDistance(route.summary.distance)}}</span
+                    ><template v-if="tollText(route)"><i aria-hidden="true">|</i><em>{{tollText(route)}}</em></template
+                    ><button type="button" class="navigation-route-chip" @click.stop="openRouteGuides(index)">상세</button></span
+                  ><span class="navigation-route-time"
+                    ><strong>{{routeMinutes(route)}}분</strong
+                    ><small v-if="routeTag(index)" :class="'is-'+routeTag(index)!.tone">{{routeTag(index)!.text}}</small></span
+                  ></div
+                ><button type="button" class="navigation-route-go" :class="{'is-off':selected!==index}" :aria-label="selected===index?'이 경로로 안내 시작':'이 경로 선택'" @click.stop="pressRouteButton(index)"
+                  ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                    ><circle cx="12" cy="12" r="10"/><path d="M8.5 16v-3.2a2.6 2.6 0 0 1 2.6-2.6h4.4"/><path d="M13.6 7.7l2.4 2.5-2.4 2.5"/></svg
+                  ></button
+                ></div
+              ></li
+            ></ul
+          ><div v-if="requested||arrived" class="navigation-arrival"
             ><div
               ><strong>{{remainingMinutes}}<small>분</small></strong
               ><span>{{formatDistance(remainingDistance)}} · {{arrivalTime}} 도착 예상</span></div
-            ><button
-              v-if="!requested"
-              type="button"
-              class="navigation-start"
-              @click="startNavigation"
-              >{{arrived?'다시 안내':'안내 시작'}}</button
-            ><button v-else type="button" class="navigation-stop" @click="stopNavigation()"
-              >안내 종료</button
+            ><div class="navigation-arrival-actions"
+              ><button v-if="requested" type="button" class="navigation-voice" :disabled="!speechSupported" :aria-pressed="voice" @click="voice=!voice"
+                >음성 {{voice?'켬':'끔'}}</button
+              ><button v-if="!requested" type="button" class="navigation-start" @click="startNavigation">다시 안내</button
+              ><button v-else type="button" class="navigation-stop" @click="stopNavigation()">안내 종료</button></div
             ></div
-          ><div v-if="requested" class="navigation-driving-tools"
-            ><button
-              type="button"
-              :disabled="!speechSupported"
-              :aria-pressed="voice"
-              @click="voice=!voice"
-              >음성 안내 {{voice?'켜짐':'꺼짐'}}</button
-            ><button v-if="offRoute" type="button" @click="reroute">경로 다시 찾기</button><button v-if="offRoute&&drivingMode==='gps'" type="button" @click="previewRoute">시연으로 경로 확인</button></div
-          ><nav class="navigation-quick-actions" aria-label="경로 상세 메뉴"
-            ><button type="button" @click="guideDialog?.showModal()"
-              >구간 안내 <small>{{guides.length}}</small></button
-            ><button type="button" @click="openCameras"
-              >주변 CCTV <small>{{cameras.length}}</small></button
-            ><button type="button" @click="infoDialog?.showModal()">도착지 날씨</button></nav
+          ><div v-if="requested||arrived" class="navigation-progress" role="progressbar" aria-label="주행 진행률" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(tripPercent)"
+            ><i :style="{width:tripPercent+'%'}"></i></div
+          ><div v-if="requested&&offRoute" class="navigation-offroute"
+            ><span>경로를 벗어났어요</span
+            ><button type="button" @click="reroute">경로 다시 찾기</button
+            ><button v-if="drivingMode==='gps'" type="button" @click="previewRoute">시연으로 확인</button></div
+          ><div class="navigation-extra"
+            ><div class="navigation-demo-controls">
+              <label>주행 방식
+                <select v-model="drivingMode" @change="changeDrivingMode">
+                  <option value="gps">실제 GPS 안내</option>
+                  <option value="demo">시연 주행</option>
+                </select>
+              </label>
+              <template v-if="drivingMode==='demo'">
+                <label>시연 배속
+                  <select v-model.number="demoSpeed" aria-label="시연 배속">
+                    <option v-for="speed in [1,2,4,8,16]" :key="speed" :value="speed">{{speed}}배속</option>
+                  </select>
+                </label>
+                <div v-if="requested" class="navigation-demo-actions"><button type="button" @click="toggleDemoPause">{{demoPaused?'시연 재개':'일시정지'}}</button>
+                <button type="button" :disabled="busy" @click="simulateClosure">{{busy?'우회 경로 조회 중…':'주행 중 통제 발생'}}</button></div>
+                <small v-if="demoIncident">통제 상황 시연 · 실제 시설 상태 유지</small>
+                <small>가상 위치 · 1배속 기준 시속 50km</small>
+              </template>
+            </div
+            ><nav class="navigation-quick-actions" aria-label="경로 상세 메뉴"
+              ><button type="button" @click="guideDialog?.showModal()"
+                >구간 안내 <small>{{guides.length}}</small></button
+              ><button type="button" @click="openCameras"
+                >주변 CCTV <small>{{cameras.length}}</small></button
+              ><button type="button" @click="infoDialog?.showModal()">도착지 날씨</button></nav
+            ></div
           ></section
         > </main
       ><CustomerAppNav />
@@ -982,48 +1103,6 @@ onBeforeUnmount(() => {
           ></div
         ></WorkflowPage
       >
-    <Teleport to="body"><dialog ref="safetyDialog" class="navigation-safety-dialog" :data-blocked="safety?.mandatory" aria-labelledby="navigation-safety-title">
-      <template v-if="safety">
-        <header><span>{{safety.mandatory?'통제 지하차도 안내':'지하차도 위험 안내'}}</span><button type="button" aria-label="우회 안내 닫기" @click="safetyDialog?.close()">×</button></header>
-        <div>
-          <h2 id="navigation-safety-title">{{safetyUnavailable?'안전한 우회 경로를 찾지 못했습니다':safety.mandatory?'통제 구간을 피하는 경로입니다':'우회 경로로 이동하시겠습니까?'}}</h2>
-          <p v-if="safety.mandatory" class="navigation-blocked-instruction"><strong>{{safety.blockedHazards?.length?safety.blockedHazards.join(' · '):'경로상의 지하차도'}} 통제 중</strong><span>해당 지하차도에 진입하지 말고 우회해 주세요.</span></p>
-          <p>{{safety.message}}</p>
-          <p v-if="safetyUnavailable" class="navigation-unavailable-help">기존 경로로 안내를 시작할 수 없습니다. 안전한 곳에서 경로를 다시 확인하고 현장 통제 안내를 따라 주세요.</p>
-          <p v-if="safety.suggestedDetour">우회 시 약 {{Math.ceil(safety.suggestedDetour.extraSec/60)}}분 추가 소요</p>
-        </div>
-        <footer>
-          <template v-if="safety.mandatory">
-            <button v-if="safetyUnavailable" type="button" @click="safetyDialog?.close()">닫기</button>
-            <button v-if="safetyUnavailable" type="button" class="primary" :disabled="busy" @click="reroute">경로 다시 찾기</button>
-            <button v-else type="button" class="primary" :disabled="busy||!active" @click="startSafeDetour">우회 경로로 안내 시작</button>
-          </template>
-          <template v-else>
-            <button v-if="safety.suggestedDetour" type="button" @click="safetyDialog?.close()">기존 경로 유지</button>
-            <button v-if="safety.suggestedDetour" type="button" class="primary" @click="acceptDetour">우회 경로 선택</button>
-            <button v-else type="button" class="primary" @click="safetyDialog?.close()">확인</button>
-          </template>
-        </footer>
-      </template>
-    </dialog></Teleport>
     </div></div
   >
 </template>
-<style scoped>
-.navigation-safety-dialog[data-blocked=true]{border-color:#354b62;background:#19293b;color:#e6eef8;}
-.navigation-safety-dialog[data-blocked=true] header{background:#22364c;color:#ff9aa8;border-bottom:1px solid #354b62;}
-.navigation-safety-dialog[data-blocked=true] h2{color:#e6eef8;}
-.navigation-safety-dialog[data-blocked=true] p{color:#adbed2;}
-.navigation-safety-dialog[data-blocked=true] .navigation-blocked-instruction{background:#3b303e;color:#f0c5cc;border:1px solid #65434f;}
-.navigation-safety-dialog[data-blocked=true] .navigation-unavailable-help{background:#22364c;color:#adbed2;}
-.navigation-blocked-instruction{display:grid;gap:6px;padding:14px;border-radius:10px;background:var(--status-danger-bg,#fde3e9);color:var(--status-danger-ink,#a32446);}
-.navigation-blocked-instruction strong{font-size:15px;line-height:23px;}.navigation-blocked-instruction span{font-size:13px;line-height:22px;}
-.navigation-unavailable-help{padding:12px;border-radius:9px;background:var(--r-soft);font-size:13px!important;color:var(--r-muted);}
-.navigation-reroute-notice{position:absolute;top:12px;left:12px;right:12px;z-index:35;display:flex;align-items:center;gap:10px;margin:0;padding:14px;border:1px solid var(--r-accent);border-radius:12px;background:var(--r-surface);color:var(--r-accent);font-size:13px;line-height:22px;box-shadow:var(--r-overlay-shadow);}
-.navigation-reroute-notice .ui-icon{width:20px;height:20px;flex:none;}
-.navigation-detour-banner{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:12px;border:1px solid var(--r-line);border-radius:10px;background:var(--r-selected);color:var(--r-accent);}
-.navigation-detour-banner>.ui-icon{width:22px;height:22px;flex:none;}.navigation-detour-banner>div{flex:1;min-width:0;}
-.navigation-detour-banner strong{font-size:13px;line-height:21px;}.navigation-detour-banner small{display:block;margin-top:3px;font-size:11px;line-height:18px;overflow-wrap:anywhere;}
-.navigation-detour-banner>button{flex:none;padding:6px 8px;min-height:36px;border:1px solid var(--r-line);border-radius:8px;background:var(--r-surface);color:var(--r-accent);font-size:12px;}
-.navigation-safety-dialog { box-sizing:border-box; width:min(420px,calc(100% - 32px)); max-height:calc(100dvh - 40px); padding:0; border:1px solid var(--status-caution-ink,#865000); border-radius:16px; background:var(--r-surface,#fff); color:var(--r-ink,#172d48); box-shadow:0 20px 70px #0004; } .navigation-safety-dialog::backdrop { background:#10203999; } .navigation-safety-dialog header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; background:var(--status-caution-bg,#fff1d6); font-weight:700; } .navigation-safety-dialog header button { border:0; background:transparent; color:inherit; font-size:24px; min-width:36px; min-height:36px; } .navigation-safety-dialog>div { padding:20px; } .navigation-safety-dialog h2 { margin:0 0 12px; font-size:20px; line-height:1.5; } .navigation-safety-dialog p { font-size:14px; line-height:1.8; overflow-wrap:anywhere; } .navigation-safety-dialog footer { display:flex; gap:8px; padding:0 20px 20px; } .navigation-safety-dialog footer button { flex:1; min-height:44px; padding:10px; border:1px solid var(--r-line,#dbe3ed); border-radius:9px; background:var(--r-surface,#fff); color:inherit; } .navigation-safety-dialog .primary { background:var(--r-accent,#225bb5); color:#fff; }
-</style>

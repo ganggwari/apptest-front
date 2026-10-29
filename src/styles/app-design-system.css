@@ -108,5 +108,4 @@
 .car-limit-note.reached { color: #c2410c; font-weight: 600; }
 button:disabled[title="차량 등록은 3대까지 가능합니다"] { opacity: .5; cursor: not-allowed; }
 
-/* 실시간 연결 점(ConnDot)은 헤더 우측 끝에 절대 위치로 놓는다 */
-:has(> .conn-dot) { position: relative; }
+/* 실시간 연결 점(ConnDot)은 App.vue 에서 한 번만 만들어 화면 우상단에 고정한다(ConnDot.vue 참고) */

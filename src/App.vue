@@ -7,6 +7,7 @@ import { useBackendStream } from './composables/useBackendEvents'
 import AdminAppNav from './components/AdminAppNav.vue'
 import AdminAppHeader from './components/AdminAppHeader.vue'
 import PwaStatus from './components/PwaStatus.vue'
+import ConnDot from './components/ConnDot.vue'
 import { watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { VNode } from 'vue'
@@ -155,6 +156,7 @@ function unmounted(vnode: VNode) {
   <div
     :class="{'admin-interface':!route.path.startsWith('/customer-app/'),'manager-app-shell':managerApp,'customer-app-editorial':route.path.startsWith('/customer-app/')&&!['/customer-app/screen-5','/customer-app/screen-6'].includes(route.path),'service-mobile':appService}"
   >
+    <ConnDot v-if="/^\/(admin|customer)-app\//.test(route.path)" />
     <AdminAppHeader v-if="managerApp&&route.path!=='/admin-app/menu'" />
     <PwaStatus :hide-install="managerApp" v-if="/^\/(admin|customer)-app\//.test(route.path)" />
     <AdminHandover v-if="app.account?.role==='REGIONAL_ADMIN'" />

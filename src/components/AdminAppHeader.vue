@@ -2,7 +2,6 @@
 import { adminPageTitle } from '../data/adminTitles'
 import { workflowPageState } from '../utils/workflow-page-state'
 import NotificationBell from './NotificationBell.vue'
-import ConnDot from './ConnDot.vue'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
@@ -66,7 +65,7 @@ const section = computed(() => route.path.split('/').at(-1)!.replace('screen-', 
       <strong>{{title}}</strong>
       <button class="ui-icon-button theme-toggle" type="button" aria-label="라이트·다크 전환" :aria-pressed="app.theme==='dark'" @click="app.themeToggle()">
           <UiIcon name="theme" />
-        </button><ConnDot />
+        </button>
     </div>
   </header>
 </template>
