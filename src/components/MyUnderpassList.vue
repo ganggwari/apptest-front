@@ -42,7 +42,7 @@ onBeforeUnmount(() => controller?.abort())
         <button type="button" :aria-pressed="String(row.id)===props.selectedId" @click="emit('select',String(row.id))">
           <span class="my-underpass-name">{{row.name}}</span>
           <RiskLevelBadge :value="row.currentRiskLevel" />
-          <small>{{row.regionName||'지역 미상'}}<template v-if="row.currentStatus==='BLOCKED'"> · 차단 중</template></small>
+          <small>{{row.regionName||'지역 미상'}}<template v-if="row.currentStatus==='BLOCKED'"> · 통제 중</template></small>
         </button>
       </li>
     </ul>

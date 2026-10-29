@@ -52,8 +52,8 @@ onBeforeUnmount(() => clearInterval(timer))
           <div class="row">
             <span class="inl-36510e94a5">✓</span>
             <div class="g">
-              <b>입구 차단</b>
-              <small>차단 완료</small>
+              <b>입구 통제</b>
+              <small>통제 완료</small>
             </div>
           </div>
           <div class="row">

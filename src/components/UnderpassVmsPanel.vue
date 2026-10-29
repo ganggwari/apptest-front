@@ -8,7 +8,7 @@ type Page = { id?: number; vmsId?: number; pageNo: number; underpassId?: number 
 type Vms = { id: number; name: string; spec?: string; dummy?: boolean; dist?: number | null; zone?: 'NEAR' | 'FAR' | null; pages?: Page[] }
 type Preset = { id: number; category: string; content: string }
 const props = defineProps<{ underpassId: string; underpassName?: string; manageable?: boolean }>()
-const categoryLabels: Record<string, string> = { SAFE: '안전', WATCH: '관심', CAUTION: '주의', BLOCK: '차단', RELEASE: '해제' }
+const categoryLabels: Record<string, string> = { SAFE: '안전', WATCH: '관심', CAUTION: '주의', BLOCK: '통제', RELEASE: '해제' }
 const vmsList = ref<Vms[]>([]), selectedId = ref<number>(), pages = ref<Page[]>([]), presets = ref<Preset[]>([]), history = ref<Record<string, any>[]>([])
 const listError = ref(''), pageError = ref(''), historyError = ref(''), loading = ref(false), pagesLoading = ref(false), notice = ref('')
 const historySource = ref(''), confirmDelete = ref<number>()
@@ -116,11 +116,11 @@ onBeforeUnmount(() => { listController?.abort(); pageController?.abort(); clearT
       <p v-else-if="!vmsList.length" class="vms-empty">1km 안에 연결된 전광판이 없습니다.</p>
       <div class="vms-options">
         <button v-for="v in vmsList" :key="v.id" type="button" class="vms-option" :aria-pressed="v.id===selectedId" @click="selectedId=v.id">
-          <span class="vms-option-row"><strong>{{v.name}}</strong><span class="vms-chip" :class="v.zone==='NEAR'?'is-near':''">{{v.zone==='NEAR'?'근접 · 차단 정보':'원거리 · 차단+우회'}}</span></span>
+          <span class="vms-option-row"><strong>{{v.name}}</strong><span class="vms-chip" :class="v.zone==='NEAR'?'is-near':''">{{v.zone==='NEAR'?'근접 · 통제 정보':'원거리 · 통제+우회'}}</span></span>
           <small>{{v.dist??'—'}}m · {{v.spec||'규격 미상'}} · 페이지 {{v.pages?.length??0}}장<template v-if="v.pages?.some(p=>p.manual)"> (수동 {{v.pages.filter(p=>p.manual).length}})</template><template v-if="v.dummy"> · 더미</template></small>
         </button>
       </div>
-      <p class="vms-note">{{underpassName||'이 지하차도'}}가 차단되면 근접 전광판엔 차단 정보, 원거리 전광판엔 차단+우회 정보가 자동으로 표출됩니다.</p>
+      <p class="vms-note">{{underpassName||'이 지하차도'}}가 통제되면 근접 전광판엔 통제 정보, 원거리 전광판엔 통제+우회 정보가 자동으로 표출됩니다.</p>
     </aside>
     <div v-if="selected" class="vms-main">
       <header class="vms-main-head">

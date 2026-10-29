@@ -74,7 +74,7 @@ const rows = computed(() => history.H.filter((row) => row.join(' ').includes(que
               <dt>사유</dt>
               <dd>침수 위험</dd>
               <dt>통제 방식</dt>
-              <dd>입구 차단 · 전광판 우회 안내</dd>
+              <dd>입구 통제 · 전광판 우회 안내</dd>
               <dt>담당 지역</dt>
               <dd>{{admin.region}}</dd>
             </dl>

@@ -751,7 +751,7 @@ async function submit() {
       )
       emit('saved', confirmed)
     }
-    if (pdf) downloadPdf(result, `이관문서-${selected.value?.id || '시설'}.pdf`)
+    if (pdf) downloadPdf(result, `이관문서-${selected.value?.id || '시설'}.pdf`, true)
     if (resourceId.value === 'my-inquiries' && mode.value === 'create')
       sessionStorage.removeItem('routel-inquiry-draft')
     modal.value?.close()
@@ -869,7 +869,7 @@ const facilitySummaryGroups = computed(() => {
     ] },
     { title: '안전 정보', fields: [
       ['currentWaterCm', '현재 수위', row.currentWaterCm],
-      ['earlyBlock', '선제 차단 대상', row.earlyBlock],
+      ['earlyBlock', '선제 통제 대상', row.earlyBlock],
       ['riverDistM', '하천 거리', row.riverDistM], ['seaDistM', '바다 거리', row.seaDistM],
       ['floodHistoryCount', '과거 침수 횟수', row.floodHistoryCount],
     ] },

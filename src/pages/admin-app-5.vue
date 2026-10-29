@@ -70,7 +70,7 @@ onBeforeUnmount(() => clearInterval(timer))
           <h4 class="inl-1169661891">데이터 수신 상태</h4>
           <span class="sub">날씨 ✓ 10:40 · 위험도 ✓ 10:40 · CCTV ✓ 10:41</span>
         </div>
-        <div class="ban w">차단됐는데 차량 3대 통과 중 · 현장 확인</div>
+        <div class="ban w">통제 중인데 차량 3대 통과 중 · 현장 확인</div>
         <button
           class="btn d inl-26d3d1951d"
           type="button"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 시연용 호우 시나리오 버튼 (관리자 상단 바). Spring 이 puf.demo.enabled=true 일 때만 보인다.
-// 누르면 초량지하차도가 속한 지역(동구) 전체에 약 2분 50초 동안 호우 → 위험도 상승 → 수위 급상승·자동 차단 → 회복 순서로 진행된다.
+// 누르면 초량지하차도가 속한 지역(동구) 전체에 약 2분 50초 동안 호우 → 위험 단계 상승 → 수위 급상승·자동 통제 → 회복 순서로 진행된다.
 // 진행 중에 다시 누르면 중지한다.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useApp } from '../stores/app'
@@ -41,12 +41,12 @@ async function refresh() {
 async function click() {
   error.value = ''
   if (running.value) {
-    if (!confirm('진행 중인 호우 시나리오를 중지할까요?\n차단 해제는 직접 해야 합니다.')) return
+    if (!confirm('진행 중인 호우 시나리오를 중지할까요?\n통제 해제는 직접 해야 합니다.')) return
   } else if (
     !confirm(
       '호우 시나리오를 시작할까요? (초량지하차도가 속한 지역 전체)\n' +
-        '약 2분 50초 동안 위험도 상승 → 수위 급상승·자동 차단 → 회복 순서로 진행되고, 알림이 발송됩니다.\n' +
-        '끝난 뒤 차단 해제는 직접 해야 합니다.',
+        '약 2분 50초 동안 위험 단계 상승 → 수위 급상승·자동 통제 → 회복 순서로 진행되고, 알림이 발송됩니다.\n' +
+        '끝난 뒤 통제 해제는 직접 해야 합니다.',
     )
   )
     return

@@ -109,7 +109,7 @@ const facilityFields: Field[] = [
   ]),
   num('riverDistM', '하천 거리(m)'),
   num('seaDistM', '바다 거리(m)'),
-  { key: 'earlyBlock', label: '선제 차단 대상', type: 'checkbox' },
+  { key: 'earlyBlock', label: '선제 통제 대상', type: 'checkbox' },
   num('floodHistoryCount', '과거 침수 횟수'),
 ]
 const cameraFields: Field[] = [
@@ -252,7 +252,7 @@ export const backendResources: Record<string, Resource> = {
     ],
     filters: [
       select('kind', '이력 종류', [
-        ['EVENT', '차단·해제·위험도'],
+        ['EVENT', '통제·해제·위험도'],
         ['DISPLAY', '전광판 문구'],
       ]),
       ...period,
@@ -351,7 +351,7 @@ export const backendResources: Record<string, Resource> = {
       { label: 'PDF 다시 받기', path: '/api/control/transfers/{id}/pdf', method: 'GET', pdf: true },
     ],
   },
-  // 전광판(its_vms) 한 대의 수동 페이지. 자동 표출 페이지(차단·위험 문구)는 서버가 만들고 수정·삭제를 막는다.
+  // 전광판(its_vms) 한 대의 수동 페이지. 자동 표출 페이지(통제·위험 문구)는 서버가 만들고 수정·삭제를 막는다.
   // 새 페이지는 원인 지하차도(underpassId)가 필수 (수정할 때는 서버가 무시)
   display: {
     title: adminResourceTitles.display!,
@@ -386,7 +386,7 @@ export const backendResources: Record<string, Resource> = {
         ['SAFE', '안전'],
         ['WATCH', '관심'],
         ['CAUTION', '주의'],
-        ['BLOCK', '차단'],
+        ['BLOCK', '통제'],
         ['RELEASE', '해제'],
       ]),
     ],
@@ -401,7 +401,7 @@ export const backendResources: Record<string, Resource> = {
     ],
     filters: [
       select('type', '유형', [
-        ['BLOCK', '차단'],
+        ['BLOCK', '통제'],
         ['RELEASE', '해제'],
       ]),
     ],
@@ -655,8 +655,8 @@ export const resourceRoutes: Record<string, string> = {
 }
 export const valueLabels: Record<string, string> = {
   UNKNOWN: '미확인',
-  RISK_LEVEL_UP: '위험도 상승',
-  RISK_LEVEL_DOWN: '위험도 하락',
+  RISK_LEVEL_UP: '위험 단계 상승',
+  RISK_LEVEL_DOWN: '위험 단계 하강',
   NORMAL: '정상',
   BLOCKED: '통제',
   SAFE: '안전',
@@ -741,7 +741,7 @@ Object.assign(valueLabels, {
   CAUTION: '주의',
   ALERT: '경계',
   SEVERE: '심각',
-  BLOCK: '차단',
+  BLOCK: '통제',
   RELEASE: '해제',
   ...Object.fromEntries([...noticeCategories, ...faqCategories]),
 })
