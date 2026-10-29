@@ -343,6 +343,7 @@ function controlLabel(f: Facility) {
   return f.controlled === true ? '통제 중' : f.controlled === false ? '정상 운영' : '상태 확인 필요'
 }
 function closeFacility() {
+  facilityPopupShown.value = false
   removeAppMapPopup('facility')
   detailAbort?.abort()
   selectedId.value = ''
@@ -391,6 +392,7 @@ const compactWeather = ref<CompactWeather | null>(null),
 let weatherAbort: AbortController | undefined
 
 const detailRegion = ref<HTMLElement | null>(null)
+const facilityPopupShown = ref(false)
 const selectedId = ref(''),
   regionId = ref('busan'),
   query = ref(''),
@@ -468,6 +470,8 @@ let maps: any, map: any, infoWindow: any, clusterInfoWindow: any, geocoder: any
 let appMapPopup: { node: HTMLElement; position: any; kind: 'facility' | 'cluster'; observer: ResizeObserver } | undefined
 function removeAppMapPopup(kind?: 'facility' | 'cluster') {
   if (!appMapPopup || (kind && appMapPopup.kind !== kind)) return
+  if (appMapPopup.kind === 'facility') facilityPopupShown.value = false
+  else clusterPopupShown.value = false
   appMapPopup.observer.disconnect()
   appMapPopup.node.remove()
   appMapPopup = undefined
@@ -792,9 +796,8 @@ const page = ref(1),
   adaptivePageSize = ref(5)
 const pageSize = computed(() => (props.manager ? 10 : appMap.value ? 5 : adaptivePageSize.value))
 const listRows = computed(() => {
-  const rows = !props.manager && clusterFacilityIds.value.length
-    ? filtered.value.filter((f) => clusterFacilityIds.value.includes(f.id))
-    : filtered.value
+  // 목록 펼치기는 묶음 선택과 무관하게 항상 전체 시설(검색/지역/상태 조건만 적용)을 보여준다.
+  const rows = filtered.value
   if (props.manager) return rows
   const priority: Record<string, number> = {
     통제: 7, 심각: 6, 위험: 5, 경계: 5, 경고: 4, 주의: 4, 관심: 3, 정상: 2, 안전: 2,
@@ -1226,6 +1229,7 @@ async function showAllFacilities() {
 let dismissedPopupId = ''
 function dismissFacilityPopup() {
   dismissedPopupId = selectedId.value
+  facilityPopupShown.value = false
   removeAppMapPopup('facility')
   infoWindow?.close()
 }
@@ -1302,6 +1306,7 @@ function openSelectedPopup() {
     infoWindow.setContent(content)
     infoWindow.open(map, item.marker)
   }
+  facilityPopupShown.value = true
 }
 // 상태별 마커 색상. 위에 있을수록 위험한 상태이며 겹칠 때 앞쪽에 그립니다.
 const markerStyles = [
@@ -1460,11 +1465,15 @@ const clusterRows = computed(() =>
 )
 let clusterPopupOpen = false,
   clusterPopupRequest = 0
+const clusterPopupShown = ref(false)
+const popupMode = computed(() => !props.manager && (facilityPopupShown.value || clusterPopupShown.value))
+watch(popupMode, () => { nextTick(() => positionAppMapPopup()) })
 function closeClusterPopup() {
   clusterPopupRequest++
   removeAppMapPopup('cluster')
   if (clusterPopupOpen) clusterInfoWindow?.close()
   clusterPopupOpen = false
+  clusterPopupShown.value = false
 }
 async function selectCluster(cluster: any) {
   const ids: string[] = cluster
@@ -1536,6 +1545,7 @@ async function selectCluster(cluster: any) {
     clusterInfoWindow.open(map)
   }
   clusterPopupOpen = true
+  clusterPopupShown.value = true
   maps.event.preventMap?.()
 }
 function markerAppearance(row: Facility) {
@@ -1609,6 +1619,7 @@ function drawMap() {
   infoWindow.close()
   clusterInfoWindow?.close()
   clusterPopupOpen = false
+  clusterPopupShown.value = false
   removeMarkers()
   drawnMode = overview ? 'overview' : 'markers'
   drawnKey = nextKey
@@ -1991,7 +2002,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main v-if="props.mapOnly" ref="customerRoot" class="map-only-live" :class="{'admin-app-map':adminAppMap}"
+  <main v-if="props.mapOnly" ref="customerRoot" class="map-only-live" :class="{'admin-app-map':adminAppMap,'map-popup-mode':popupMode}"
 
     ><div ref="mapElement" class="customer-map-canvas" aria-label="카카오 지도"></div>
     <form v-if="adminAppMap" class="admin-map-search" @submit.prevent="searchFacilities()">
@@ -2035,7 +2046,7 @@ onBeforeUnmount(() => {
     v-else-if="!props.manager"
     ref="customerRoot"
     class="wire-page page-c-map legacy-live-map"
-    :class="{'mobile-app-map':appMap,'mobile-app-detail':appDetail,'map-sheet-open':sheetOpen||sheetHeight!==null&&sheetHeight>130}"
+    :class="{'mobile-app-map':appMap,'mobile-app-detail':appDetail,'map-sheet-open':sheetOpen||sheetHeight!==null&&sheetHeight>130,'map-popup-mode':popupMode}"
     :style="appMap?{'--map-sheet-height':sheetHeight!==null?sheetHeight+'px':sheetOpen?'calc(100% - 74px)':'68px'}:undefined"
   >
     <div class="app map-swap-layout map-columns">
@@ -2057,7 +2068,7 @@ onBeforeUnmount(() => {
           ><div class="pill" aria-label="마커 색상 안내"
             ><span v-for="style in markerLegendStyles" :key="style.label"
               ><button type="button" class="legend-filter-button" :aria-pressed="legendFilter===style.label" :class="{'legend-muted':legendFilter&&legendFilter!==style.label}" @click="toggleLegend(style.label)"><i :style="{background:style.color}"></i>{{style.label}}</button></span
-            ><span><i style="background:#1671d9"></i>내 위치</span></div
+            ><span><button type="button" class="legend-filter-button" :disabled="findingPosition" @click="locateUser"><i style="background:#1671d9"></i>내 위치</button></span></div
           ><TrafficMapLayers :map="trafficMap" :maps="trafficMaps" toggle-controls :app="appMap||adminAppMap" /></div>
     <div class="customer-map-control-dock">
       <button type="button" class="map-control-toggle" :aria-expanded="mapControlsExpanded" aria-label="지도 조작 접기·펼치기" @click="mapControlsExpanded=!mapControlsExpanded">지도 <span aria-hidden="true">{{mapControlsExpanded?'›':'‹'}}</span></button>

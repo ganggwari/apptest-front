@@ -1,5 +1,5 @@
 import { installAuthFetch } from './runtime/authFetch'
-import { installDemoSwitcher } from './runtime/demoSwitcher'
+import { installSessionGuard } from './services/sessionGuard'
 import { installConnStatus } from './runtime/connStatus'
 import { registerPwa } from './runtime/pwa'
 import { installErrorVisibility } from './runtime/errorVisibility'
@@ -59,7 +59,7 @@ createApp(App)
   .mount('#app')
 
 registerPwa()
-installDemoSwitcher()
+installSessionGuard(router)
 installConnStatus()
 const errorRoot = document.getElementById('app')
 if (errorRoot) {

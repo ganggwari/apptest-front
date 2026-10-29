@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AdminBackButton from './AdminBackButton.vue'
 import CustomerMobileHeader from './CustomerMobileHeader.vue'
+import ConnDot from './ConnDot.vue'
 import { workflowPageState } from '../utils/workflow-page-state'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
@@ -79,7 +80,7 @@ function active(path: string) {
         @click="app.themeToggle()"
       >
           <UiIcon name="theme" />
-        </button>
+        </button><ConnDot />
     </header>
     <main class="app-restored-body"><slot /></main>
     <CustomerAppNav v-if="!auth&&!manager" />

@@ -29,6 +29,9 @@ async function load() {
     const store = props.manager ? managerStore : customer
     let found: CustomerNotification | undefined
     let last: CustomerNotification | undefined
+    // 알림 상세에 들어오면 목록 조회와 별개로 먼저 읽음 처리를 시도한다(목록에서 못 찾아도 읽음 처리는 반드시 나가도록).
+    let readDone = false
+    const readNow = store.read(id).then(() => { readDone = true }).catch(() => { /* 아래에서 한 번 더 시도 */ })
     // The notification API exposes a paginated list, without a single-item GET.
     for (let page = 1; !found; page++) {
       const result = asPage<CustomerNotification>(await backend(
@@ -54,12 +57,11 @@ async function load() {
       if (found || page >= result.totalPages || !result.items.length) break
     }
     if (request.signal.aborted) return
-    if (!found) throw Error('알림을 찾을 수 없습니다. 목록에서 다시 확인해 주세요.')
+    if (!found) { await readNow; throw Error('알림을 찾을 수 없습니다. 목록에서 다시 확인해 주세요.') }
     item.value = { ...found }
-    if (!found.read) {
-      await store.read(id)
-      if (!request.signal.aborted && item.value) item.value.read = true
-    }
+    await readNow
+    if (!found.read && !readDone) await store.read(id)
+    if (!request.signal.aborted && item.value) item.value.read = true
   } catch (e) { if (!request.signal.aborted) error.value = (e as Error).message }
   finally { if (!request.signal.aborted) loading.value = false }
 }

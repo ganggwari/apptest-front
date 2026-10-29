@@ -20,6 +20,7 @@ import EmailInput from '../components/EmailInput.vue'
 import PhoneInput from '../components/PhoneInput.vue'
 import NationalitySelect from '../components/NationalitySelect.vue'
 import { formatPhone } from '../utils/phone'
+import { DEMO_ACCOUNTS } from '../services/demoAccounts'
 const app = useApp()
 import type { Field } from '../data/backendResources'
 const route = useRoute(),
@@ -85,13 +86,11 @@ watch(
   () => [kind.value, rememberedIdKey.value],
   () => {
     if (kind.value !== 'login') return
-    let saved = ''
-    try {
-      saved = localStorage.getItem(rememberedIdKey.value) || ''
-    } catch {}
-    values.loginId = saved
-    values.password = ''
-    rememberId.value = !!saved
+    // 시연용: 고객 앱은 customer01, 관리자 앱은 manager01 을 미리 채워 로그인 버튼만 누르게 한다
+    const demo = manager.value ? DEMO_ACCOUNTS.manager : DEMO_ACCOUNTS.customer
+    values.loginId = demo.loginId
+    values.password = demo.password
+    rememberId.value = false
   },
   { immediate: true },
 )

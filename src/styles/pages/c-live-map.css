@@ -212,3 +212,11 @@
 .manager-live-map .manager-search-facility-copy { display:flex; flex-direction:column; gap:3px; min-width:0; }
 .manager-live-map .manager-map-search-results .risk-level-badge,.manager-live-map .manager-search-blocked { flex:none; font-size:11px; line-height:18px; padding:3px 8px; border-radius:5px; }
 .manager-live-map .manager-search-blocked { background:var(--admin-alert-surface,#fff0f2); color:var(--admin-alert-ink,#b84455); }
+
+/* 마커/묶음 팝업이 열려 있으면 상단 검색창·범주바·교통시설 버튼을 숨겨 팝업을 가리지 않게 한다. */
+.map-popup-mode .app-map-search,
+.map-popup-mode .admin-map-search,
+.map-popup-mode .map-overlay-toolbar,
+.map-popup-mode .mtop {
+  display: none !important;
+}

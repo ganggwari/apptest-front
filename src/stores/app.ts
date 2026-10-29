@@ -52,7 +52,10 @@ export const useApp = defineStore('app', () => {
     }
   }
   function clearAccount() {
-    localStorage.removeItem('routel-session-kind')
+    // 같은 브라우저의 다른 앱(관리자/고객)이 방금 남긴 로그인 표식은 지우지 않는다. 내 표식일 때만 지운다.
+    const mine = account.value?.role === 'customer' ? 'customer' : account.value ? 'manager' : ''
+    if (!mine || localStorage.getItem('routel-session-kind') === mine)
+      localStorage.removeItem('routel-session-kind')
     authVersion.value++
     account.value = null
     data.value = {}

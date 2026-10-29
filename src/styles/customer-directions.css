@@ -828,3 +828,10 @@ dialog.navigation-weather-dialog {
 
 .navigation-demo-box { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; padding: 8px; border: 1px dashed #9aa3ae; border-radius: 10px; font-size: 12px; }
 .navigation-demo-box button { padding: 6px 9px; font-size: 12px; }
+
+/* 진행 방향 고정(heading-up) 주행 중에는 지도 요소가 회전하므로 래퍼에서 넘치는 부분을 잘라낸다. */
+.directions-map-wrap.nav-rotating { overflow: hidden; }
+.navigation-body .directions-map-wrap.nav-rotating .directions-map { max-width: none; max-height: none; border-radius: 0; will-change: transform; }
+/* 시연 경로 버튼: 둥근 네모 3개를 나란히 */
+.navigation-demo-routes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.navigation-demo-routes button { padding: 12px 0; border-radius: 14px; font-size: 14px; font-weight: 700; text-align: center; }

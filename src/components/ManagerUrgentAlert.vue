@@ -9,15 +9,19 @@ import { displayDate } from '../utils/display-date'
 import type { CustomerNotification } from '../stores/customerNotifications'
 const app = useApp(), route = useRoute(), router = useRouter(), store = useManagerNotifications()
 const dialog = ref<HTMLDialogElement>(), queue = ref<CustomerNotification[]>([]), busy = ref(false), error = ref('')
-const current = computed(() => queue.value[0])
+// 로그인한 관리자가 로그인 화면이 아닌 곳에 있을 때만 긴급 알림 팝업을 띄운다 (로그인 전·풀린 뒤에는 절대 띄우지 않는다)
+const eligible = computed(() =>
+  app.account?.role === 'REGIONAL_ADMIN' &&
+  !['/admin-app/screen-1', '/admin-app/signup', '/admin-app/password-reset'].includes(route.path))
+const current = computed(() => (eligible.value ? queue.value[0] : undefined))
 const seen = new Set<number>()
 let request: AbortController | undefined, generation = 0
 function ingest(row: CustomerNotification) {
-  if (app.account?.role !== 'REGIONAL_ADMIN' || row.urgent !== true || row.read || seen.has(row.id)) return
+  if (!eligible.value || row.urgent !== true || row.read || seen.has(row.id)) return
   seen.add(row.id); queue.value.push(row)
 }
 async function refresh() {
-  if (app.account?.role !== 'REGIONAL_ADMIN') return
+  if (!eligible.value) return
   request?.abort(); const controller = new AbortController(); request = controller
   const version = generation
   try {
@@ -34,9 +38,20 @@ async function acknowledge(details = false) {
     if (version !== generation) return
     queue.value = queue.value.filter(item => item.id !== row.id)
     if (details) await router.push({ path: route.path.startsWith('/admin-app/') ? '/admin-app/notifications' : '/admin-data/manager-notifications', query: { notification: String(row.id) } })
-  } catch (e) { if (version === generation) error.value = (e as Error).message }
+  } catch (e) {
+    // 읽음 처리에 실패해도(로그인 풀림 등) 팝업에 갇히지 않게 목록에서는 뺀다. 로그인이 풀린 경우는 곧 로그인 화면으로 이동한다
+    if (version === generation) {
+      queue.value = queue.value.filter(item => item.id !== row.id)
+      error.value = ''
+    }
+  }
   finally { if (version === generation) busy.value = false }
 }
+watch(eligible, (ok) => {
+  if (ok) { void refresh(); return }
+  generation++; request?.abort(); queue.value = []; seen.clear(); busy.value = false; error.value = ''
+  if (dialog.value?.open) dialog.value.close()
+})
 watch(() => current.value?.id, async () => {
   await nextTick()
   if (current.value && !dialog.value?.open) dialog.value?.showModal()

@@ -102,3 +102,11 @@
 #app :is(.manager-app-shell,.customer-app-editorial,.service-mobile) .notification-center-list>li { border-color:var(--r-line); border-radius:14px; background:var(--r-surface); }
 #app :is(.manager-app-shell,.customer-app-editorial,.service-mobile) .notification-center-title { font-size:14px; line-height:22px; }
 #app :is(.manager-app-shell,.customer-app-editorial,.service-mobile) .notification-center-body { padding:12px; margin:0 12px 12px; border-radius:10px; background:var(--r-soft); font-size:13px; line-height:22px; }
+
+/* 차량 등록 3대 제한 안내 */
+.car-limit-note { align-self: center; font-size: 12px; color: var(--muted, #6b7280); }
+.car-limit-note.reached { color: #c2410c; font-weight: 600; }
+button:disabled[title="차량 등록은 3대까지 가능합니다"] { opacity: .5; cursor: not-allowed; }
+
+/* 실시간 연결 점(ConnDot)은 헤더 우측 끝에 절대 위치로 놓는다 */
+:has(> .conn-dot) { position: relative; }

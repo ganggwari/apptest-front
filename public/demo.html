@@ -11,7 +11,7 @@
   h1{font-size:20px;margin:0 0 6px} h2{font-size:15px;margin:0 0 10px} h3{font-size:15px;margin:0}
   section,.card{background:var(--card);border-radius:12px;padding:14px 16px;margin:12px 0;box-shadow:0 1px 3px #0001}
   button{border:0;border-radius:8px;padding:9px 13px;font-weight:700;cursor:pointer;background:var(--pri);color:#fff;margin:3px 5px 3px 0;font-size:13px}
-  button.gray{background:#6b7280} button.red{background:#c0392b}
+  button.gray{background:#6b7280} button.red{background:#c0392b} button:disabled{opacity:.45;cursor:not-allowed}
   button.lv{background:#e5e9f0;color:#1f2937} button.lv.on{outline:3px solid var(--pri)}
   button.L-SAFE{background:#2e9e5b;color:#fff} button.L-WATCH{background:#2f80ed;color:#fff} button.L-CAUTION{background:#e0a100;color:#fff}
   button.L-ALERT{background:#e2692b;color:#fff} button.L-SEVERE{background:#c0392b;color:#fff}
@@ -101,13 +101,16 @@ const LV = [['SAFE','안전'],['WATCH','관심'],['CAUTION','주의'],['ALERT','
 const show = (v) => (out.textContent = typeof v === 'string' ? v : JSON.stringify(v, null, 2))
 async function api(method, url, body, quiet) {
   try {
-    const r = await fetch(remote(url), { method, credentials: 'include', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined })
+    const headers = body ? { 'Content-Type': 'application/json' } : {}
+    if (authToken) headers['Authorization'] = 'Bearer ' + authToken
+    const r = await fetch(remote(url), { method, credentials: 'include', headers, body: body ? JSON.stringify(body) : undefined })
     const j = await r.json().catch(() => null)
-    if (r.status === 401 || r.status === 403) { if (!quiet) show('로그인(관리자)이 필요합니다. 앱에서 관리자 로그인 후 다시 시도하세요. (' + r.status + ')'); return null }
+    if (r.status === 401 || r.status === 403) { if (!quiet) show('관리자 로그인이 필요합니다. 위에서 manager01 을 눌러 로그인한 뒤 다시 시도하세요. (' + r.status + ')'); return null }
     if (!quiet) show(j ?? r.status)
     return j
   } catch (e) { if (!quiet) show('요청 실패: ' + e.message) }
 }
+let authToken = ''   // 쿠키가 막힌 브라우저(iOS Safari 등)용 토큰
 const cameras = {}   // underpassId -> [{id, role}]
 let rows = []
 async function loadLevels(quiet) {
@@ -129,6 +132,8 @@ function render() {
       <div class="stat">위험점수 ${r.riskScore ?? '-'} · 수위 ${r.waterCm ?? '-'}cm · 차단 수위 ${r.blockCm}cm</div>
       <div>${LV.map(([k, n]) => `<button class="L-${k} ${r.pinnedLevel === k ? 'on' : ''}" data-set="${r.underpassId}:${k}">${n}</button>`).join('')}
         <button class="gray" data-rel="${r.underpassId}">고정 풀기</button></div>
+      <div class="stat">통제: <button class="red" data-block="${r.underpassId}" ${r.status === 'BLOCKED' ? 'disabled' : ''}>통제 시작</button>
+        <button class="gray" data-unblock="${r.underpassId}" ${r.status === 'BLOCKED' ? '' : 'disabled'}>통제 해제</button></div>
       <div class="stat">번호판 인식: ${(cameras[r.underpassId] || []).map((c) => `<button class="gray" data-fire="${c.id}">${c.role === 'APPROACH_LPR' ? '접근' : '최종'} 카메라 #${c.id}</button>`).join('') || '접근/최종 카메라 없음'}</div>
     </div>`).join('')
 }
@@ -137,6 +142,13 @@ document.addEventListener('click', async (e) => {
   if (t.dataset.set) { const [id, level] = t.dataset.set.split(':'); const j = await api('POST', '/api/demo/levels', { underpassIds: [Number(id)], level }); if (j && j.data) { rows = j.data; render() } }
   else if (t.dataset.rel) { const j = await api('DELETE', '/api/demo/levels', { underpassIds: [Number(t.dataset.rel)] }); if (j && j.data) { rows = j.data; render() } }
   else if (t.dataset.fire) fire(Number(t.dataset.fire))
+  else if (t.dataset.block || t.dataset.unblock) {
+    // 관리자(통제 권한) 로그인이 필요하다. 로그인이 안 되어 있으면 api() 가 안내 문구를 보여준다.
+    const id = Number(t.dataset.block || t.dataset.unblock), act = t.dataset.block ? 'block' : 'release'
+    const j = await api('POST', '/api/control/underpasses/' + id + '/' + act)
+    if (j) show((act === 'block' ? '통제 시작' : '통제 해제') + ' 요청 완료 (#' + id + ')\n' + JSON.stringify(j, null, 2))
+    await loadLevels(true)
+  }
 })
 $('releaseAll').onclick = async () => { const j = await api('DELETE', '/api/demo/levels', {}); if (j && j.data) { rows = j.data; render() } }
 function fire(cameraId) { api('POST', '/api/demo/plate/fire', { cameraId, loginId: $('login').value.trim() || 'customer01', carNum: $('car').value || null }) }
@@ -193,12 +205,13 @@ async function doLogin(kind, loginId, password) {
   try {
     const r = await fetch(remote('/api/' + kind + '/login'), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId, password: password || loginId }) })
     const j = await r.json().catch(() => null)
+    authToken = r.ok ? (r.headers.get('X-Auth-Token') || '') : ''
     show(r.ok ? (loginId + ' 로그인 완료') : ('로그인 실패(' + r.status + '): ' + ((j && j.message) || '')))
   } catch (e) { show('요청 실패: ' + e.message) }
   await who(); await loadLevels(true); $('loadCars').click(); await loadPm()
 }
 $('loginBtn').onclick = () => doLogin($('lkind').value, $('lid').value.trim(), $('lpw').value)
-$('logoutBtn').onclick = async () => { await api('POST', '/api/auth/logout'); await who(); $('levels').textContent = '로그아웃됨 — 관리자로 로그인하세요'; rows = [] }
+$('logoutBtn').onclick = async () => { await api('POST', '/api/auth/logout'); authToken = ''; await who(); $('levels').textContent = '로그아웃됨 — 관리자로 로그인하세요'; rows = [] }
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-login]'); if (b) { const [k, id] = b.dataset.login.split(':'); doLogin(k, id) } })
 who()
 

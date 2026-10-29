@@ -100,6 +100,17 @@ export async function disableFcm(role: Role) {
   lastOwner = ''
   localStorage.removeItem(ownerKey)
 }
+// 사용자가 마이페이지에서 푸시를 직접 끈 계정은 로그인 때 자동으로 다시 켜지 않는다.
+const optOutKey = (role: Role, id: string) => `puf-fcm-optout:${role}:${id}`
+export function isFcmOptedOut(role: Role, id: string) {
+  try { return localStorage.getItem(optOutKey(role, id)) === '1' } catch { return false }
+}
+export function setFcmOptOut(role: Role, id: string, value: boolean) {
+  try { value ? localStorage.setItem(optOutKey(role, id), '1') : localStorage.removeItem(optOutKey(role, id)) } catch { /* ignore */ }
+}
+export function isFcmActive(role: Role, id: string) {
+  return 'Notification' in window && Notification.permission === 'granted' && localStorage.getItem(ownerKey) === `${role}:${id}`
+}
 export function resetFcmOwner() {
   lastOwner = ''
   currentToken = ''

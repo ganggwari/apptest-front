@@ -143,6 +143,8 @@ async function review(row: Record<string, any>, number: string) {
   await open('action', row, resource.value.actions?.[0])
   values.correctedNum = number
 }
+const MAX_CARS = 3
+const carLimitReached = computed(() => resourceId.value === 'cars' && (data.value.items?.length ?? 0) >= MAX_CARS)
 const publicNotices = computed(() => customer.value && resourceId.value === 'notices')
 const managerNotificationList = computed(() => resourceId.value === 'manager-notifications')
 const pageSize = computed(() => route.path.startsWith('/admin-app/') ? 5 : route.path.startsWith('/customer-app/') ? 20 : 10)
@@ -554,6 +556,7 @@ function closeSummaryBackdrop(event: MouseEvent) {
   summaryBackdropDown = false
 }
 async function open(kind: string, row?: Record<string, any>, itemAction?: Action) {
+  if (kind === 'create' && carLimitReached.value) return
   if (resource.value.detailFromRow && row) {
     const record = data.value.items.find((item) => String(item.id) === String(row?.id))
     if (!record && Object.keys(row).every(key => key === 'id')) {
@@ -1119,9 +1122,10 @@ defineExpose({ open, load })
             @click="readAllManagerNotifications"
           >모두 읽음</button>
           <button v-if="!vmsSplit&&!appPage" class="resource-refresh" type="button" :disabled="loading||missingParent" @click="load">새로고침</button>
-          <button v-if="resource.create&&canWrite&&!vmsSplit" type="button" @click="open('create')">
+          <button v-if="resource.create&&canWrite&&!vmsSplit" type="button" :disabled="carLimitReached" :title="carLimitReached?'차량 등록은 3대까지 가능합니다':undefined" @click="open('create')">
             {{resourceId==='cars'?'차량 등록':resourceId==='my-inquiries'?'문의 등록':facilityList?'+ 지하차도 등록':'새로 등록'}}
           </button>
+          <small v-if="resourceId==='cars'&&!vmsSplit" class="car-limit-note" :class="{reached:carLimitReached}" role="note">차량 등록은 3대까지 가능합니다</small>
         </div>
       </div>
       <nav v-if="!customer&&!appPage&&!props.embedded&&relatedIds.length>1" class="service-tabs tabs page-selection-tabs" aria-label="업무 구분">

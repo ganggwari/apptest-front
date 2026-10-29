@@ -2,22 +2,11 @@
 import { adminPageTitle } from '../data/adminTitles'
 import { workflowPageState } from '../utils/workflow-page-state'
 import NotificationBell from './NotificationBell.vue'
-import { ref } from 'vue'
-import { enableFcm } from '../services/fcmPush'
+import ConnDot from './ConnDot.vue'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
 import AdminBackButton from './AdminBackButton.vue'
-const fcmBusy = ref(false), fcmStatus = ref('')
-async function enableManagerPush() {
-  if (!app.account || fcmBusy.value) return
-  fcmBusy.value = true
-  try {
-    await enableFcm('REGIONAL_ADMIN', app.account.id, true)
-    fcmStatus.value = '관리자 FCM 푸시가 활성화되었습니다.'
-  } catch (e) { fcmStatus.value = (e as Error).message }
-  finally { fcmBusy.value = false }
-}
 const route = useRoute(),
   app = useApp()
 const titles: Record<string, string> = {
@@ -70,7 +59,6 @@ const section = computed(() => route.path.split('/').at(-1)!.replace('screen-', 
         to="/admin-app/screen-3"
         aria-label="ROUTEL 관리자 앱 홈"
       >ROUTEL</RouterLink>
-      <button type="button" class="manager-fcm-setup" :disabled="fcmBusy" @click="enableManagerPush">{{fcmBusy?'연결 중':'푸시 켜기'}}</button>
       <NotificationBell class="manager-app-bell-preview" />
     </div>
     <div class="manager-app-titlebar">
@@ -78,10 +66,8 @@ const section = computed(() => route.path.split('/').at(-1)!.replace('screen-', 
       <strong>{{title}}</strong>
       <button class="ui-icon-button theme-toggle" type="button" aria-label="라이트·다크 전환" :aria-pressed="app.theme==='dark'" @click="app.themeToggle()">
           <UiIcon name="theme" />
-        </button>
+        </button><ConnDot />
     </div>
-  <p v-if="fcmStatus" role="status" style="padding:6px 12px;font-size:12px">{{fcmStatus}}</p>
   </header>
 </template>
 <style scoped src="../styles/components/admin-app-header.css"></style>
-<style scoped>.manager-fcm-setup{font:inherit;font-size:11px;border:1px solid rgba(255,255,255,.65);color:inherit;background:transparent;border-radius:10px;padding:7px 8px;cursor:pointer}.manager-fcm-setup:disabled{opacity:.6}</style>
