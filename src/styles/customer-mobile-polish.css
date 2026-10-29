@@ -63,3 +63,33 @@
 #app .customer-app-editorial .public-chat-dialog .public-chat-compose button { width:68px; height:48px; padding:8px; box-sizing:border-box; }
 #app .customer-app-editorial .public-chat-form nav { gap:18px; padding-top:10px; }
 #app .customer-app-editorial .public-chat-privacy { margin-top:6px; font-size:10px; line-height:16px; }
+
+/* 고객 지도: 마커 선택 시 올라오는 시설 시트(미리보기 → 끌어올리면 전체)와 전체 화면 목록 */
+#app .mobile-app-map:not(.mobile-app-detail).map-sheet-open .app-map-search { display:none; }
+#app .legacy-live-map.mobile-app-map:not(.mobile-app-detail) .app.map-swap-layout>aside.app-map-sheet { z-index:14; }
+#app .legacy-live-map.mobile-app-map:not(.mobile-app-detail).map-sheet-open .app.map-swap-layout>aside.app-map-sheet:not(.is-collapsed):not(.is-dragging) {
+  height:100%!important; max-height:100%; border-radius:0; box-shadow:none;
+}
+#app .legacy-live-map.mobile-app-map:not(.mobile-app-detail) .app.map-swap-layout>aside.map-detail-sheet { max-height:100%; min-height:0; }
+#app .legacy-live-map.mobile-app-map:not(.mobile-app-detail) .app.map-swap-layout>aside.map-detail-sheet.is-peek:not(.is-dragging) {
+  height:var(--map-sheet-height)!important;
+}
+#app .map-detail-sheet .mobile-sheet-handle { height:28px; min-height:28px; padding:0; }
+#app .map-detail-sheet .back-to-list { display:none; }
+#app .map-detail-sheet .map-sheet-close {
+  position:absolute; top:12px; right:14px; z-index:2; width:32px; height:32px; padding:0;
+  border:0; border-radius:50%; background:var(--r-soft,#f5f8fc); color:var(--r-muted,#5c738b);
+  font-size:14px; line-height:32px; text-align:center; cursor:pointer;
+}
+#app .map-detail-sheet .det { padding:2px 16px 18px; }
+#app .map-detail-sheet .det .nm { padding-right:40px; }
+#app .map-detail-sheet.is-peek .det { overflow:hidden; }
+#app .map-detail-sheet .det>.btn[aria-expanded] { display:none; }
+#app .map-detail-sheet.is-peek .detail-extended,
+#app .map-detail-sheet.is-peek .det>a { display:none!important; }
+#app .map-detail-sheet:not(.is-peek) .detail-extended { display:block!important; }
+
+/* 관리자 지도 팝업: 위험단계 · 위험점수 · 수위를 한 줄로 */
+#app .routel-map-popup__metrics { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:0 8px; min-width:0; }
+#app .routel-map-popup__metric { font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+#app .routel-map-popup__metric::before { content:'|'; margin-right:8px; font-weight:400; color:var(--r-line,#c9d6e4); }

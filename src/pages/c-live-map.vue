@@ -44,11 +44,14 @@ const sheetOpen = ref(false),
   sheetHeight = ref<number | null>(null)
 let sheetDrag: { id: number; y: number; height: number; limit: number } | undefined,
   sheetMoved = false
+// 고객 지도: 마커/목록 선택 시 올라오는 시설 시트. 낮게(미리보기) → 위로 끌면 화면 전체.
+const PEEK_HEIGHT = 'clamp(250px,42%,330px)'
+const detailSheet = computed(() => appMap.value && !appDetail.value && !!selectedId.value)
 function startSheet(event: PointerEvent) {
   if (!event.isPrimary || event.button !== 0) return
   const handle = event.currentTarget as HTMLElement,
     rect = handle.parentElement!.getBoundingClientRect(),
-    limit = Math.max(68, customerRoot.value!.clientHeight - 74)
+    limit = Math.max(68, customerRoot.value!.clientHeight - (appMap.value ? 0 : 74))
   sheetMoved = false
   sheetDrag = { id: event.pointerId, y: event.clientY, height: rect.height, limit }
   handle.setPointerCapture(event.pointerId)
@@ -63,7 +66,12 @@ function moveSheet(event: PointerEvent) {
 function endSheet() {
   if (sheetHeight.value !== null && sheetDrag) {
     if (sheetHeight.value > sheetDrag.height + 6) sheetOpen.value = true
-    else if (sheetHeight.value < sheetDrag.height - 6) sheetOpen.value = false
+    else if (sheetHeight.value < sheetDrag.height - 6) {
+      // 시설 시트: 전체 → 미리보기 → (더 내리면) 닫힘
+      if (detailSheet.value && !sheetOpen.value) {
+        if (sheetHeight.value < sheetDrag.height - 30) closeFacility()
+      } else sheetOpen.value = false
+    }
   }
   sheetHeight.value = null
   sheetDrag = undefined
@@ -83,25 +91,37 @@ function startListTouch(event: TouchEvent) {
   listTouch = { y: event.touches[0]!.clientY, top: !list || list.scrollTop <= 0 }
 }
 function endListTouch(event: TouchEvent) {
-  if (listTouch?.top && event.changedTouches.length && event.changedTouches[0]!.clientY - listTouch.y > 60)
-    sheetOpen.value = false
+  const dy = event.changedTouches.length && listTouch ? event.changedTouches[0]!.clientY - listTouch.y : 0
+  if (listTouch?.top && dy > 60) {
+    if (detailSheet.value && !sheetOpen.value) closeFacility()
+    else sheetOpen.value = false
+  } else if (listTouch && dy < -60 && detailSheet.value && !sheetOpen.value) sheetOpen.value = true
   listTouch = undefined
 }
 function collapseSheetOutside(event: PointerEvent) {
-  if ((!appMap.value && !adminAppMap.value) || !sheetOpen.value || sheetDrag) return
+  if ((!appMap.value && !adminAppMap.value) || !sheetOpen.value || sheetDrag || detailSheet.value) return
   const target = event.target
   if (!(target instanceof Element)) return
   if (target.closest('.app-map-sheet,.app-map-search,.admin-facility-sheet,dialog[open]')) return
   sheetOpen.value = false
   sheetHeight.value = null
 }
+const sheetBaseHeight = computed(() =>
+  appMap.value && !appDetail.value
+    ? sheetOpen.value ? '100%' : detailSheet.value ? PEEK_HEIGHT : '68px'
+    : sheetOpen.value ? 'calc(100% - 74px)' : '68px',
+)
 const sheetStyle = computed(() =>
   appMap.value || props.mapOnly
-    ? {
-        height:
-          sheetHeight.value !== null ? sheetHeight.value + 'px' : sheetOpen.value ? 'calc(100% - 74px)' : '68px',
-      }
+    ? { height: sheetHeight.value !== null ? sheetHeight.value + 'px' : sheetBaseHeight.value }
     : undefined,
+)
+// 드래그 중 지도를 숨기는 기준: 목록은 130px, 시설 시트는 화면의 70%
+const sheetCoversMap = computed(
+  () =>
+    sheetOpen.value ||
+    (sheetHeight.value !== null &&
+      sheetHeight.value > (detailSheet.value ? (customerRoot.value?.clientHeight || 600) * 0.7 : 130)),
 )
 // 고객과 관리자에서 조회하는 공개 시설 목록입니다.
 
@@ -487,7 +507,7 @@ function positionAppMapPopup() {
     if (element.getClientRects().length) top = Math.max(top, element.getBoundingClientRect().bottom - rect.top + 8)
   }
   const bottom = root.clientHeight - 12
-  const width = Math.min(280, root.clientWidth - 24)
+  const width = Math.min(300, root.clientWidth - 24)
   popup.node.style.width = `${width}px`
   popup.node.style.maxHeight = `${Math.max(0, bottom - top)}px`
   const height = popup.node.getBoundingClientRect().height
@@ -1063,6 +1083,27 @@ async function loadDetail(id: string) {
     }
   }
 }
+// 미리보기 시트에 가려지지 않도록, 선택한 마커를 상단 도구와 시트 사이 가운데로 옮긴다.
+function centerAbovePeek(lat: number, lng: number) {
+  if (!map || !maps || !appMap.value || appDetail.value) return
+  const root = customerRoot.value
+  map.relayout()
+  map.setCenter(new maps.LatLng(lat, lng))
+  if (!root || !map.panBy || sheetOpen.value) return
+  const box = root.getBoundingClientRect(),
+    height = root.clientHeight,
+    toolsBottom = root.querySelector<HTMLElement>('.mtop')?.getBoundingClientRect().bottom,
+    top = toolsBottom ? toolsBottom - box.top : 150,
+    peek = Math.min(330, Math.max(250, height * 0.42)),
+    target = Math.max(top + 30, (top + (height - peek)) / 2)
+  map.panBy(0, height / 2 - target)
+}
+watch(sheetOpen, async () => {
+  if (!appMap.value || appDetail.value || !selected.value) return
+  await nextTick()
+  const row = selected.value
+  if (row.latitude !== null && row.longitude !== null) centerAbovePeek(row.latitude, row.longitude)
+})
 async function selectFacility(f: Facility) {
   dismissedPopupId = ''
   closeClusterPopup()
@@ -1082,6 +1123,7 @@ async function selectFacility(f: Facility) {
     clusterer?.redraw()
     map.setLevel(5, { anchor: new maps.LatLng(f.latitude, f.longitude) })
     map.setCenter(new maps.LatLng(f.latitude, f.longitude))
+    centerAbovePeek(f.latitude, f.longitude)
     if (adminAppMap.value && map.panBy) {
       // 검색·범례 아래에 팝업을 놓고, 아래 시설 목록 위에 마커를 유지한다.
       const root = customerRoot.value
@@ -1240,9 +1282,11 @@ function dismissPopupOutside(event: PointerEvent) {
 function dismissMapPopups() {
   dismissFacilityPopup()
   closeClusterPopup()
+  if (detailSheet.value && !sheetOpen.value) closeFacility() // 지도 빈 곳을 누르면 시트 닫기
 }
 function openSelectedPopup() {
   if (props.manager && !props.mapOnly) return
+  if (appMap.value) return // 고객 앱은 지도 팝업 대신 아래 시트로 보여준다
   if (!map || !selected.value || detailLoading.value) return
   if (dismissedPopupId === selectedId.value) return
   const item = markers.find((m) => m.id === selectedId.value)
@@ -1284,7 +1328,20 @@ function openSelectedPopup() {
   badge.className = 'routel-map-popup__status'
   badge.dataset.state = stateLabel(row)
   badge.textContent = stateLabel(row)
-  status.append(label, badge)
+  // 위험단계 | 위험점수 | 현재 수위를 한 줄에 나열한다 (값이 없으면 —)
+  const metrics = document.createElement('span')
+  metrics.className = 'routel-map-popup__metrics'
+  metrics.append(badge)
+  for (const text of [
+    row.riskScore == null ? '—' : row.riskScore.toFixed(1) + '점',
+    row.currentWaterCm == null ? '—' : row.currentWaterCm + ' cm',
+  ]) {
+    const item = document.createElement('span')
+    item.className = 'routel-map-popup__metric'
+    item.textContent = text
+    metrics.append(item)
+  }
+  status.append(label, metrics)
   const time = document.createElement('p')
   time.className = 'routel-map-popup__row routel-map-popup__row--time'
   const timeLabel = document.createElement('span')
@@ -2046,8 +2103,8 @@ onBeforeUnmount(() => {
     v-else-if="!props.manager"
     ref="customerRoot"
     class="wire-page page-c-map legacy-live-map"
-    :class="{'mobile-app-map':appMap,'mobile-app-detail':appDetail,'map-sheet-open':sheetOpen||sheetHeight!==null&&sheetHeight>130,'map-popup-mode':popupMode}"
-    :style="appMap?{'--map-sheet-height':sheetHeight!==null?sheetHeight+'px':sheetOpen?'calc(100% - 74px)':'68px'}:undefined"
+    :class="{'mobile-app-map':appMap,'mobile-app-detail':appDetail,'map-sheet-open':sheetCoversMap,'map-detail-peek':detailSheet&&!sheetCoversMap,'map-popup-mode':popupMode}"
+    :style="appMap?{'--map-sheet-height':sheetHeight!==null?sheetHeight+'px':sheetBaseHeight}:undefined"
   >
     <div class="app map-swap-layout map-columns">
       <form
@@ -2104,19 +2161,20 @@ onBeforeUnmount(() => {
     <div v-if="mapError" class="map-error-note" role="status">{{mapError}}</div>
       </section>
    <aside
-        v-if="selected&&(!appMap||appDetail)"
+        v-if="selected&&(!appMap||appDetail||detailSheet)"
         class="panel swapped-detail"
         aria-label="선택한 지하차도"
         @touchstart.passive="startListTouch"
         @touchend.passive="endListTouch"
         @touchcancel="listTouch=undefined"
-        :class="{'app-map-sheet':appMap,'is-collapsed':appMap&&!sheetOpen,'is-dragging':sheetHeight!==null}"
+        :class="{'app-map-sheet':appMap,'is-collapsed':appMap&&appDetail&&!sheetOpen,'map-detail-sheet':appMap&&!appDetail,'is-peek':appMap&&!appDetail&&!sheetOpen,'is-dragging':sheetHeight!==null}"
         :style="sheetStyle"
         ><button
           v-if="appMap"
           class="mobile-sheet-handle"
           type="button"
           :aria-expanded="sheetOpen"
+          :aria-label="appDetail?undefined:sheetOpen?'시설 정보 줄이기':'시설 정보 펼치기'"
           @pointerdown="startSheet"
           @pointermove="moveSheet"
           @pointerup="endSheet"
@@ -2124,8 +2182,9 @@ onBeforeUnmount(() => {
           @lostpointercapture="endSheet"
           @click="toggleSheet"
           @wheel.prevent="sheetOpen=$event.deltaY>0"
-          >{{sheetOpen?'목록 접기':'목록 펼치기'}} · {{listRows.length}}곳<small v-if="!sheetOpen" class="collapsed-list-summary">{{collapsedListSummary}}</small></button
+          ><template v-if="appDetail">{{sheetOpen?'목록 접기':'목록 펼치기'}} · {{listRows.length}}곳<small v-if="!sheetOpen" class="collapsed-list-summary">{{collapsedListSummary}}</small></template></button
         >
+    <button v-if="appMap&&!appDetail" type="button" class="map-sheet-close" aria-label="시설 정보 닫기" @click="closeFacility">✕</button>
     <button type="button" class="btn back-to-list" @click="closeFacility">목록으로</button>
     <div ref="detailRegion" class="det" tabindex="-1" aria-live="polite">
           <div class="sub">{{formatTime(selected.updatedAt)}} 기준</div>
@@ -2281,7 +2340,7 @@ onBeforeUnmount(() => {
           @lostpointercapture="endSheet"
           @click="toggleSheet"
           @wheel.prevent="sheetOpen=$event.deltaY>0"
-          >{{sheetOpen?'목록 접기':'목록 펼치기'}} · {{listRows.length}}곳<small v-if="!sheetOpen" class="collapsed-list-summary">{{collapsedListSummary}}</small></button
+          >{{sheetOpen?'목록 접기':'목록보기'}} · {{listRows.length}}곳<small v-if="!sheetOpen" class="collapsed-list-summary">{{collapsedListSummary}}</small></button
         >
     <div class="ph"
           ><h2

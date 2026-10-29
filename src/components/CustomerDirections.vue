@@ -44,7 +44,7 @@ const safety = ref<SafetyRoute|null>(null)
 const safetyUnavailable = computed(()=>!!safety.value?.mandatory&&!safety.value.detoured)
 const rerouting=ref(false)
 const demoIncident=ref(false)
-const demoStartPending=ref(false)
+const reroutingDriving=ref(false)
 let hazardTimer: ReturnType<typeof setTimeout>|undefined, prioritySpeechUntil = 0
 function announce(message:string) {
   if (!speechSupported||!voice.value) return
@@ -54,8 +54,8 @@ function announce(message:string) {
 }
 // 주행 중 안내 카드 아래에 뜨는 알림 카드.
 // control = 통제 지하차도 재탐색(잠깐 떴다가 사라짐), risk = 위험단계 상승 우회 추천(확인·취소 전까지 유지),
-// blocked = 안전한 우회 경로를 찾지 못함(닫기 전까지 유지)
-type RouteNotice = { id: number; kind: 'control' | 'risk' | 'blocked'; title: string; text: string }
+// 두 카드 모두 주행 중에만 뜬다(출발 전 경로 탐색 중에는 경로 카드의 설명으로만 알려준다)
+type RouteNotice = { id: number; kind: 'control' | 'risk'; title: string; text: string }
 const NOTICE_SECONDS = 6
 const routeNotice = ref<RouteNotice | null>(null)
 let noticeTimer: ReturnType<typeof setTimeout> | undefined, noticeSeq = 0, declinedRiskKey = ''
@@ -80,9 +80,6 @@ function presentSafety() {
     if (result.detoured)
       setNotice({ kind: 'control', title: '통제 지하차도를 피해 경로를 재탐색했어요',
         text: `${blocked} 통제 중 · 우회 경로로 안내합니다${demoIncident.value ? ' (시연 상황)' : ''}` }, true)
-    else
-      setNotice({ kind: 'blocked', title: '안전한 우회 경로를 찾지 못했어요',
-        text: result.message || `${blocked} 통제 중입니다. 현장 통제 안내를 따라 주세요.` })
     return
   }
   if (!result.advisoryHazards?.length && !result.suggestedDetour) return
@@ -92,24 +89,18 @@ function presentSafety() {
     ? ` · 우회 시 약 ${Math.max(1, Math.ceil(result.suggestedDetour.extraSec / 60))}분 더 걸려요` : ''
   setNotice({ kind: 'risk', title: '전방 지하차도 위험단계가 올랐어요', text: `${hazards}${extra}` })
 }
-// 위험단계 상승 카드가 떠 있는 동안에는 시연 주행을 자동으로 시작하지 않고 선택을 기다린다
-const awaitingChoice = computed(() => routeNotice.value?.kind === 'risk')
 function acceptDetour() {
-  const running = requested.value || demoStartPending.value
+  const running = requested.value
   const detour = !!safety.value?.suggestedDetour
   if (!detour && safety.value) declinedRiskKey = riskKey(safety.value)
   dismissNotice()
   if (detour) chooseRoute(1)
   if (running && !safetyUnavailable.value) startNavigation()
-  demoStartPending.value = false
   if (detour) announce('우회 경로로 안내합니다.')
 }
 function keepRoute() {
-  const pending = demoStartPending.value
   if (safety.value) declinedRiskKey = riskKey(safety.value)
   dismissNotice()
-  demoStartPending.value = false
-  if (pending && active.value && !safetyUnavailable.value) startNavigation()
 }
 type Weather = {
   temperature: number | null
@@ -235,7 +226,6 @@ async function search() {
   await runSearch()
 }
 async function runSearch() {
-  demoStartPending.value=false
   demoIncident.value=false
   stopNavigation()
   safety.value=null
@@ -263,10 +253,9 @@ async function runSearch() {
       const assessed=await navigationRequest<SafetyRoute>('route',{origin:coord(from),destination:coord(to)},current.signal)
       if(!alive||current.signal.aborted)return
       safety.value=assessed
-      if(assessed.mandatory&&!assessed.detoured){presentSafety();throw Error(assessed.message||'통제 지하차도를 피하는 경로를 찾지 못했습니다.')}
+      if(assessed.mandatory&&!assessed.detoured){throw Error(assessed.message||'통제 지하차도를 피하는 경로를 찾지 못했습니다.')}
       candidates=[safetyRouteCandidate(assessed)]
       if(assessed.suggestedDetour)candidates.push(safetyRouteCandidate(assessed.suggestedDetour))
-      if(assessed.mandatory||assessed.advisoryHazards?.length)presentSafety()
     } else candidates=await navigationRequest<Route[]>('directions',{origin:coord(from),destination:coord(to)},current.signal)
     if (!candidates.length) throw Error('이 구간에서 자동차 경로를 찾지 못했습니다.')
     if (!alive || current.signal.aborted) return
@@ -277,7 +266,12 @@ async function runSearch() {
     await nextTick()
     draw()
   } catch (e) {
-    if (!current.signal.aborted) error.value = (e as Error).message
+    if (!current.signal.aborted) {
+      error.value = (e as Error).message
+      // 경로가 없으면 검색창을 다시 열어 이유가 보이게 한다
+      editing.value = true
+      searchExpanded.value = true
+    }
   } finally {
     if (!current.signal.aborted) busy.value = false
   }
@@ -532,8 +526,7 @@ async function startDemoTrip() {
   if(busy.value)return
   drivingMode.value='demo'
   await search()
-  demoStartPending.value=!!active.value
-  if(active.value&&!safetyUnavailable.value&&!awaitingChoice.value){startNavigation();demoStartPending.value=false}
+  if(active.value&&!safetyUnavailable.value)startNavigation()
 }
 async function simulateClosure() {
   if(drivingMode.value!=='demo'||!requested.value||!position.value||!destination.value||busy.value)return
@@ -692,16 +685,50 @@ async function reroute() {
   if(rerouting.value)return
   rerouting.value=true
   const running=requested.value
+  reroutingDriving.value=running
   if (position.value) {
     origin.value = { name: '내 위치', lat: position.value.lat, lng: position.value.lng }
     originText.value = '내 위치'
   }
   try {
     const pending=runSearch()
-    announce('위험 정보를 반영해 경로를 재탐색합니다.')
+    if(running)announce('위험 정보를 반영해 경로를 재탐색합니다.')
     await pending
-    if(running&&active.value&&!safetyUnavailable.value){startNavigation();announce('경로를 재탐색했습니다. 새 경로로 안내합니다.')}
-  } finally {rerouting.value=false}
+    if(running&&active.value&&!safetyUnavailable.value){
+      startNavigation()
+      presentSafety()
+      announce('경로를 재탐색했습니다. 새 경로로 안내합니다.')
+    } else if(running&&safetyUnavailable.value) announce('안전한 우회 경로를 찾지 못했어요. 현장 통제 안내를 따라 주세요.')
+  } finally {rerouting.value=false;reroutingDriving.value=false}
+}
+// 현재 경로와 관련된 위험 정보만 비교한다. 다른 지하차도가 바뀐 경우에는 값이 같아서 아무 것도 하지 않는다
+const hazardSignature = (route: SafetyRoute | null) =>
+  route
+    ? JSON.stringify([
+        route.mandatory, route.detoured, !!route.suggestedDetour,
+        [...(route.passesHazards || [])].sort(), [...(route.blockedHazards || [])].sort(), [...(route.advisoryHazards || [])].sort(),
+      ])
+    : ''
+let hazardChecking = false, hazardRecheck = false
+async function checkRouteHazards() {
+  if (hazardChecking) { hazardRecheck = true; return }
+  if (!store.account || !active.value || !origin.value || !destination.value || busy.value || rerouting.value || demoIncident.value || arrived.value) return
+  hazardChecking = true
+  try {
+    // 안내를 멈추지 않고 서버 평가만 다시 받아 온다 (길찾기를 처음 눌렀을 때와 같은 출발·도착으로 비교)
+    const assessed = await navigationRequest<SafetyRoute>('route', { origin: coord(origin.value), destination: coord(destination.value) })
+    if (!alive || hazardSignature(assessed) === hazardSignature(safety.value)) return
+    if (requested.value) await reroute()
+    else if (!busy.value) await runSearch()
+  } catch {
+    // 일시적인 오류는 무시하고 다음 이벤트 때 다시 확인한다
+  } finally {
+    hazardChecking = false
+    if (hazardRecheck) {
+      hazardRecheck = false
+      if (alive) hazardTimer = setTimeout(() => void checkRouteHazards(), 1500)
+    }
+  }
 }
 function openCameras() {
   camera.value = null
@@ -746,7 +773,7 @@ useBackendEvents(({name,data})=>{
   if(!store.account||!active.value)return
   if(name!=='connected'&&name!=='control-change'&&!(name==='data-changed'&&data.resource==='navigation-hazard'))return
   clearTimeout(hazardTimer)
-  hazardTimer=setTimeout(()=>{if(alive&&!busy.value)void reroute()},400)
+  hazardTimer=setTimeout(()=>{if(alive)void checkRouteHazards()},400)
 })
 watch(offRoute,(outside)=>{if(outside&&requested.value)announce('경로를 벗어났습니다. 경로 다시 찾기를 눌러 재탐색해 주세요.')})
 onBeforeUnmount(() => {
@@ -902,7 +929,7 @@ onBeforeUnmount(() => {
               ><em>다음 안내</em></div
             ></section
           ><div class="navigation-notices"
-            ><div v-if="rerouting" class="navigation-notice is-busy" role="status"
+            ><div v-if="reroutingDriving" class="navigation-notice is-busy" role="status"
               ><span class="navigation-notice-icon" aria-hidden="true"><UiIcon name="refresh" /></span
               ><div class="navigation-notice-body"><b>경로를 다시 찾고 있어요</b><small>통제·위험 정보를 반영하고 있어요.</small></div></div
             ><div v-else-if="routeNotice" :key="routeNotice.id" class="navigation-notice" :class="'is-'+routeNotice.kind" :role="routeNotice.kind==='control'?'status':'alert'"
@@ -916,9 +943,6 @@ onBeforeUnmount(() => {
                 ><div v-if="routeNotice.kind==='risk'" class="navigation-notice-actions"
                   ><button v-if="safety?.suggestedDetour" type="button" @click="keepRoute">취소</button
                   ><button type="button" class="primary" @click="acceptDetour">확인</button></div
-                ><div v-else-if="routeNotice.kind==='blocked'" class="navigation-notice-actions"
-                  ><button type="button" @click="dismissNotice">닫기</button
-                  ><button type="button" class="primary" :disabled="busy" @click="reroute">경로 다시 찾기</button></div
                 ></div
               ></div
             ></div

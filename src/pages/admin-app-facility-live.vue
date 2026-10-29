@@ -117,14 +117,22 @@ function action(item: Action) {
           <span class="app-metric-caption">관측 강우량</span>
         </div>
         <div class="app-metric">
-          <small>잔류 차량</small>
-          <b>{{facility.remainingCount??'미수신'}}<span v-if="facility.remainingCount!=null">대</span></b>
-          <span class="app-metric-caption">시설 내 차량</span>
+          <small>현재 수위</small>
+          <b>{{facility.currentWaterCm??'미수신'}}<span v-if="facility.currentWaterCm!=null">cm</span></b>
+          <span class="app-metric-caption">수위계 관측값</span>
         </div>
-        <div class="app-metric">
-          <small>판별 대기</small>
-          <b>{{facility.pendingReviewCount??'미수신'}}<span v-if="facility.pendingReviewCount!=null">건</span></b>
-          <span class="app-metric-caption">번호판 확인 대상</span>
+        <div class="app-metric app-metric-pair">
+          <div class="app-metric-pair-row">
+            <div>
+              <small>잔류 차량</small>
+              <b>{{facility.remainingCount??'미수신'}}<span v-if="facility.remainingCount!=null">대</span></b>
+            </div>
+            <div>
+              <small>판별 대기</small>
+              <b>{{facility.pendingReviewCount??'미수신'}}<span v-if="facility.pendingReviewCount!=null">건</span></b>
+            </div>
+          </div>
+          <span class="app-metric-caption">시설 내 차량 · 번호판 확인 대상</span>
         </div>
       </div>
       </section>
@@ -171,6 +179,13 @@ function action(item: Action) {
 .app-metric>small { color:var(--r-muted,#5c738b); font-size:12px; }
 .app-metric>b { font-size:22px; line-height:28px; font-weight:750; font-variant-numeric:tabular-nums; }
 .app-metric>b>span { margin-left:4px; font-size:12px; font-weight:500; }
+.app-metric-pair { align-items:stretch; }
+.app-metric-pair-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0; }
+.app-metric-pair-row>div { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.app-metric-pair-row>div+div { padding-left:12px; border-left:1px solid var(--r-line,#dce7f2); }
+.app-metric-pair small { color:var(--r-muted,#5c738b); font-size:12px; }
+.app-metric-pair b { font-size:22px; line-height:28px; font-weight:750; font-variant-numeric:tabular-nums; }
+.app-metric-pair b>span { margin-left:4px; font-size:12px; font-weight:500; }
 .app-metric-caption { color:var(--r-muted,#5c738b); font-size:11px; line-height:16px; }
 .app-facility-records { margin:18px 0 0; padding:16px; border:1px solid var(--r-line,#dce7f2); border-radius:14px; background:var(--r-surface,#fff); }
 .app-facility-records nav { display:grid; grid-template-columns:minmax(0,1fr); margin-top:10px; }
