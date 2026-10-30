@@ -10,7 +10,7 @@ const app = useApp(),
   error = ref(''),
   member = computed(() => app.account?.role === 'customer')
 const menus = [
-  {label:'내 정보 관리',section:'profile',icon:'user'},
+  {label:'설정',section:'profile',icon:'user'},
   {label:'알림 수신 설정',section:'alerts',icon:'bell'},
   {label:'내 문의',section:'inquiries',icon:'chat'},
   {label:'회원 탈퇴',section:'withdraw',icon:'logout'},

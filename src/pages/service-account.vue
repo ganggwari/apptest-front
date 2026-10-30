@@ -7,6 +7,7 @@ import ServiceResource from './backend-resource.vue'
 import FeedbackToast from '../components/FeedbackToast.vue'
 import AccountActions from '../components/AccountActions.vue'
 import ManagerPushDevices from '../components/ManagerPushDevices.vue'
+import NavigationVoiceSettings from '../components/NavigationVoiceSettings.vue'
 import profileMascot from '../assets/mascot/routel-ru-transparent.png'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -63,7 +64,7 @@ const accountSection = computed(() =>
 )
 const pageTitle = computed(() =>
   mobileCombined.value
-    ? '내 정보 관리'
+    ? '설정'
     : manager.value
     ? managerApp.value ? '마이페이지' : '관리자 마이페이지'
     : accountSection.value === 'withdraw'
@@ -240,7 +241,8 @@ onBeforeUnmount(() => controller.abort())
                 required /></label
             ><button :disabled="busy" type="submit">계정 탈퇴</button></form
           ></section
-        ></template
+        ><NavigationVoiceSettings v-if="mobileCombined"
+        /></template
       ><h2 v-if="managerApp" class="manager-mypage-group-title">업무·이용 안내</h2><nav v-if="managerApp" class="app-more-menu" aria-label="마이페이지 메뉴"
         ><RouterLink to="/admin-app/history"><UiIcon name="document" />점검 이력 <span>›</span></RouterLink
         ><RouterLink to="/admin-app/notifications"><UiIcon name="bell" />알림 내역 <span>›</span></RouterLink

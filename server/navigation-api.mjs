@@ -1,5 +1,11 @@
 // Server-only API bridge: credentials are never sent to the browser bundle.
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { join, resolve } from 'node:path'
 const cache = new Map()
+// 만든 안내 음성은 파일로도 남겨 서버를 다시 켜도 Gemini 를 다시 부르지 않는다
+const ttsDirectory = resolve('.routel-data', 'tts')
+const ttsPending = new Map()
 const number = (value, min, max) => {
   const n = Number(value)
   if (value == null || value === '' || !Number.isFinite(n) || n < min || n > max)
@@ -52,6 +58,66 @@ function key(env, name) {
   if (!env[name]) throw new Error('MISSING_KEY')
   return env[name]
 }
+// 내비 음성 안내용 Gemini 목소리. 브라우저에서 고를 수 있는 이름만 받는다
+const ttsVoices = new Set(['Kore', 'Aoede', 'Zephyr', 'Sulafat', 'Charon', 'Iapetus', 'Orus', 'Puck'])
+// Gemini 는 24kHz 16bit 모노 PCM 을 주므로 브라우저가 바로 재생하도록 WAV 머리말을 붙인다
+function wav(pcm, rate = 24000) {
+  const head = Buffer.alloc(44)
+  head.write('RIFF', 0); head.writeUInt32LE(36 + pcm.length, 4); head.write('WAVE', 8)
+  head.write('fmt ', 12); head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22)
+  head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34)
+  head.write('data', 36); head.writeUInt32LE(pcm.length, 40)
+  return Buffer.concat([head, pcm])
+}
+function speech(env, text, voice) {
+  const id = `tts:${voice}:${text}`,
+    stored = cache.get(id)
+  if (stored) return Promise.resolve(stored.data)
+  // 미리 받기와 실제 안내가 같은 문장을 동시에 요청하면 한 번만 만든다
+  if (!ttsPending.has(id))
+    ttsPending.set(id, speechFile(env, text, voice).then((data) => {
+      if (cache.size > 300) cache.delete(cache.keys().next().value)
+      cache.set(id, { data })
+      return data
+    }).finally(() => ttsPending.delete(id)))
+  return ttsPending.get(id)
+}
+async function speechFile(env, text, voice) {
+  const file = join(ttsDirectory, createHash('sha256').update(`${voice}\n${text}`).digest('hex') + '.wav')
+  try { return await readFile(file) } catch { /* 처음 듣는 문장이면 새로 만든다. */ }
+  const data = await generateSpeech(env, text, voice)
+  try {
+    await mkdir(ttsDirectory, { recursive: true })
+    await writeFile(file, data)
+  } catch { /* 파일로 못 남겨도 이번 음성은 그대로 쓴다. */ }
+  return data
+}
+async function generateSpeech(env, text, voice) {
+  const model = env.GEMINI_TTS_MODEL?.trim() || 'gemini-2.5-flash-preview-tts'
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(15000),
+    headers: { 'x-goog-api-key': key(env, 'GEMINI_API_KEY').trim(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+      },
+    }),
+  })
+  if (!response.ok) {
+    const error = new Error(
+      response.status === 401 || response.status === 403 ? 'PROVIDER_AUTH' : response.status === 429 ? 'TTS_LIMIT' : 'PROVIDER_RESPONSE',
+    )
+    error.status = response.status
+    throw error
+  }
+  const part = (await response.json()).candidates?.[0]?.content?.parts?.find((row) => row.inlineData?.data)
+  if (!part) throw new Error('PROVIDER_RESPONSE')
+  const rate = Number(/rate=(\d+)/.exec(part.inlineData.mimeType || '')?.[1]) || 24000
+  return wav(Buffer.from(part.inlineData.data, 'base64'), rate)
+}
 export function navigationApi(env) {
   const middleware = async (req, res, next) => {
     const url = new URL(req.url || '/', 'http://localhost')
@@ -69,6 +135,15 @@ export function navigationApi(env) {
       let data
       const p = url.searchParams,
         path = url.pathname.replace('/api/navigation/', '')
+      if (path === 'tts') {
+        const text = (p.get('text') || '').trim(),
+          voice = p.get('voice') || ''
+        if (!text || text.length > 200 || !ttsVoices.has(voice)) throw Error('INVALID_INPUT')
+        const audio = await speech(env, text, voice)
+        res.setHeader('Content-Type', 'audio/wav')
+        res.setHeader('Cache-Control', 'private, max-age=86400')
+        return res.end(audio)
+      }
       if (path === 'places') {
         const q = (p.get('q') || '').trim()
         if (!q || q.length > 100) throw Error('INVALID_INPUT')
@@ -206,6 +281,7 @@ export function navigationApi(env) {
         NO_ROUTE: '이 구간에서 자동차 경로를 찾지 못했습니다.',
         WEATHER_UNAVAILABLE: '기상청 관측 정보를 받아오지 못했습니다.',
         CCTV_UNAVAILABLE: 'ITS CCTV 정보를 받아오지 못했습니다.',
+        TTS_LIMIT: '음성 생성 사용량 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.',
       }
       reply(error.message === 'INVALID_INPUT' ? 400 : 502, {
         success: false,
