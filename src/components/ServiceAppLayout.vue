@@ -40,7 +40,9 @@ const baseTitle = computed(() =>
                 ? '공지사항'
                 : route.path.endsWith('/faq')
                   ? 'FAQ'
-                  : '내 정보',
+                  : route.path.endsWith('/account/profile')
+                    ? '설정'
+                    : '내 정보',
 )
 const title = computed(() => workflowPageState.title || baseTitle.value)
 const links = [

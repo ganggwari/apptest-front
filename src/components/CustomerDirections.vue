@@ -25,6 +25,7 @@ import {
   passesAvoidPoint,
 } from '../services/navigation'
 import { projectRoute, distanceMeters, formatDistance, routeTimeline } from '../utils/navigation-progress'
+import { preloadNavigationSpeech, speakNavigation, spokenDistance, stopNavigationSpeech } from '../utils/navigation-voice'
 import '../styles/customer-app-7.css'
 import '../styles/customer-directions.css'
 const store = useApp(),
@@ -52,8 +53,7 @@ let hazardTimer: ReturnType<typeof setTimeout>|undefined, prioritySpeechUntil = 
 function announce(message:string) {
   if (!speechSupported||!voice.value) return
   prioritySpeechUntil=Date.now()+4000
-  speechSynthesis.cancel()
-  const utterance=new SpeechSynthesisUtterance(message);utterance.lang='ko-KR';speechSynthesis.speak(utterance)
+  void speakNavigation(message)
 }
 // 주행 중 안내 카드 아래에 뜨는 알림 카드.
 // control = 통제 지하차도 재탐색(잠깐 떴다가 사라짐), risk = 위험단계 상승 우회 추천(확인·취소 전까지 유지),
@@ -485,7 +485,7 @@ function stopNavigation(resetArrival = true) {
   requested.value = false
   userOverlay?.setMap(null)
   userOverlay = undefined
-  if (speechSupported && voice.value) speechSynthesis.cancel()
+  if (speechSupported && voice.value) stopNavigationSpeech()
   if (resetArrival) arrived.value = false
 }
 function updateDemoPosition() {
@@ -512,7 +512,7 @@ function toggleDemoPause() {
   cancelAnimationFrame(demoFrame)
   demoLastTime = 0
   if (demoPaused.value) {
-    if (speechSupported && voice.value) speechSynthesis.cancel()
+    if (speechSupported && voice.value) stopNavigationSpeech()
   } else demoFrame = requestAnimationFrame(demoTick)
 }
 function changeDrivingMode() {
@@ -784,15 +784,22 @@ watch([guideIndex, navigating, voice], () => {
     || Date.now()<prioritySpeechUntil
   )
     return
-  speechSynthesis.cancel()
-  const message = new SpeechSynthesisUtterance(
-    `${formatDistance(nextDistance.value)} 후 ${currentGuide.value.guidance}`,
-  )
-  message.lang = 'ko-KR'
-  speechSynthesis.speak(message)
+  void speakNavigation(guideSentence(guideIndex.value, nextDistance.value))
 })
+function guideSentence(index: number, meters: number) {
+  const guide = guides.value[index]
+  return guide ? `${spokenDistance(meters)} ${guide.guidance}` : ''
+}
+// AI 목소리는 만드는 데 몇 초 걸려서, 안내가 바뀔 때 그 다음 안내 문장을 미리 받아 둔다.
+// 다음 안내 때 남은 거리 = 두 안내 지점 사이 거리(안내가 바뀌는 15 m 여유를 뺀 값)
+watch([guideIndex, requested, voice], () => {
+  if (!requested.value || !voice.value) return
+  const index = guideIndex.value + (navigating.value ? 1 : 0),
+    gap = (guidePositions.value[index] ?? 0) - (guidePositions.value[index - 1] ?? 0) - 15
+  preloadNavigationSpeech([guideSentence(index, gap)])
+}, { immediate: true })
 watch(voice, (enabled) => {
-  if (!enabled && speechSupported) speechSynthesis.cancel()
+  if (!enabled && speechSupported) stopNavigationSpeech()
 })
 useBackendEvents(({name,data})=>{
   if(!store.account||!active.value)return
