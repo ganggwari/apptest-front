@@ -111,7 +111,7 @@ function acceptDetour() {
   dismissNotice()
   if (detour) chooseRoute(1)
   if (running && !safetyUnavailable.value) startNavigation()
-  if (detour) announce('우회 경로로 안내합니다.')
+  if (detour) announce('우회 경로로 안내해 드릴게요.')
 }
 function keepRoute() {
   if (safety.value) declinedRiskKey = riskKey(safety.value)
@@ -559,7 +559,7 @@ async function simulateClosure() {
   const wasPaused=demoPaused.value
   if(!demoPaused.value)toggleDemoPause()
   busy.value=true;error.value='';gpsError.value=''
-  announce('시연 상황입니다. 전방 통제로 우회 경로를 찾습니다.')
+  announce('시연 안내입니다. 전방이 통제되어 우회 경로를 찾고 있어요.')
   try {
     let candidate:Route|undefined
     const dx=ahead.lng-from.lng,dy=ahead.lat-from.lat,length=Math.hypot(dx,dy)||1
@@ -580,7 +580,7 @@ async function simulateClosure() {
     routes.value=[candidate];selected.value=0
     demoIncident.value=true
     safety.value={distance:candidate.summary.distance,duration:candidate.summary.duration,path:routePoints(candidate).map(p=>[p.lat,p.lng]),guides:[],mandatory:true,detoured:true,blockedHazards:['전방 시연 구간'],advisoryHazards:[],passesHazards:[],message:'주행 중 통제가 발생한 시연 상황입니다. 실제 시설 통제에는 영향을 주지 않습니다.'}
-    await nextTick();draw();presentSafety();startNavigation();announce('통제 구간을 피해 우회 경로로 안내합니다.')
+    await nextTick();draw();presentSafety();startNavigation();announce('통제 구간을 피해 우회 경로로 안내해 드릴게요.')
   } catch(e) {
     gpsError.value=(e as Error).message
     if(!wasPaused&&requested.value&&demoPaused.value)toggleDemoPause()
@@ -713,12 +713,12 @@ async function reroute() {
   }
   try {
     const pending=runSearch()
-    if(running)announce('위험 정보를 반영해 경로를 재탐색합니다.')
+    if(running)announce('위험 정보를 반영해 경로를 다시 찾고 있어요.')
     await pending
     if(running&&active.value&&!safetyUnavailable.value){
       startNavigation()
       presentSafety()
-      announce('경로를 재탐색했습니다. 새 경로로 안내합니다.')
+      announce('새 경로를 찾았어요. 다시 안내해 드릴게요.')
     } else if(running&&safetyUnavailable.value) announce('안전한 우회 경로를 찾지 못했어요. 현장 통제 안내를 따라 주세요.')
   } finally {rerouting.value=false;reroutingDriving.value=false}
 }
@@ -790,12 +790,10 @@ function guideSentence(index: number, meters: number) {
   const guide = guides.value[index]
   return guide ? `${spokenDistance(meters)} ${guide.guidance}` : ''
 }
-// AI 목소리는 만드는 데 몇 초 걸려서, 안내가 바뀔 때 그 다음 안내 문장을 미리 받아 둔다.
-// 다음 안내 때 남은 거리 = 두 안내 지점 사이 거리(안내가 바뀌는 15 m 여유를 뺀 값)
 watch([guideIndex, requested, voice], () => {
-  if (!requested.value || !voice.value) return
-  const index = guideIndex.value + (navigating.value ? 1 : 0),
-    gap = (guidePositions.value[index] ?? 0) - (guidePositions.value[index - 1] ?? 0) - 15
+  if (!voice.value || !active.value) return
+  const index = guideIndex.value + (navigating.value ? 1 : 0)
+  const gap = (guidePositions.value[index] ?? 0) - (guidePositions.value[index - 1] ?? 0) - 15
   preloadNavigationSpeech([guideSentence(index, gap)])
 }, { immediate: true })
 watch(voice, (enabled) => {
@@ -807,7 +805,7 @@ useBackendEvents(({name,data})=>{
   clearTimeout(hazardTimer)
   hazardTimer=setTimeout(()=>{if(alive)void checkRouteHazards()},400)
 })
-watch(offRoute,(outside)=>{if(outside&&requested.value)announce('경로를 벗어났습니다. 경로 다시 찾기를 눌러 재탐색해 주세요.')})
+watch(offRoute,(outside)=>{if(outside&&requested.value)announce('안내 경로를 벗어났어요. 경로 다시 찾기를 눌러 주세요.')})
 onBeforeUnmount(() => {
   clearTimeout(hazardTimer)
   clearTimeout(noticeTimer)
