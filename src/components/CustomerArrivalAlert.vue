@@ -5,6 +5,7 @@ import { useApp } from '../stores/app'
 import { notificationCategory, useCustomerNotifications } from '../stores/customerNotifications'
 import { displayDate } from '../utils/display-date'
 import UiIcon from './UiIcon.vue'
+import { playCustomerEmergencyAlert } from '../runtime/customerAlertSound'
 
 const app = useApp(), route = useRoute()
 const notifications = useCustomerNotifications()
@@ -104,6 +105,9 @@ watch(() => current.value?.id, () => {
   busy.value = false
   actionError.value = ''
   void syncDialog()
+  // 긴급재난문자(접근 알림·진입 직전 알림)가 뜰 때 이목을 끄는 경보음. 안전 정보가 아닌 알림(공지 등)에는 울리지 않는다
+  if (current.value && eligible.value && current.value.category === 'RISK' && document.visibilityState === 'visible')
+    playCustomerEmergencyAlert(current.value.id, true)
 })
 onBeforeUnmount(() => {
   stop()

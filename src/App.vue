@@ -38,10 +38,13 @@ import { mobileInteractions } from './runtime/mobileInteractions'
 import { useApp } from './stores/app'
 import { enableFcm, resetFcmOwner, syncFcmOptOut } from './services/fcmPush'
 import { unlockManagerAlertAudio, playManagerAlert } from './runtime/managerAlertSound'
+import { unlockCustomerAlertAudio } from './runtime/customerAlertSound'
 useBackendStream()
 if (typeof window !== 'undefined') {
   window.addEventListener('pointerdown', unlockManagerAlertAudio, { passive: true })
   window.addEventListener('keydown', unlockManagerAlertAudio)
+  window.addEventListener('pointerdown', unlockCustomerAlertAudio, { passive: true })
+  window.addEventListener('keydown', unlockCustomerAlertAudio)
   window.addEventListener('puf-fcm-message', ((event: Event) => {
     if (app.account?.role !== 'REGIONAL_ADMIN') return
     const payload = (event as CustomEvent).detail

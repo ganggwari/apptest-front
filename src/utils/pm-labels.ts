@@ -17,6 +17,7 @@ export const PM_TRIGGERS: Record<string, string> = {
   DANGER_ENTRY: '위험진입',
   SURGE: '급상승',
   NO_DATA: '미수신',
+  MANUAL: '수동등록',
   SINKHOLE: '싱크홀 의심 탐지',
 }
 // GET /api/pm/engine-status 의 status
