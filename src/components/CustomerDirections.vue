@@ -50,8 +50,10 @@ const rerouting=ref(false)
 const demoIncident=ref(false)
 const reroutingDriving=ref(false)
 let hazardTimer: ReturnType<typeof setTimeout>|undefined, prioritySpeechUntil = 0
-function announce(message:string) {
-  if (!speechSupported||!voice.value) return
+// force=true: 통제·우회 알림처럼 꼭 들려야 하는 안내. 음성 안내를 꺼 두어도 읽어 준다.
+// 경로 재탐색을 시작·마칠 때는 따로 소리를 내지 않는다.
+function announce(message:string, force=false) {
+  if (!speechSupported||(!voice.value&&!force)) return
   prioritySpeechUntil=Date.now()+4000
   void speakNavigation(message)
 }
@@ -95,6 +97,7 @@ function presentSafety() {
     if (result.detoured)
       setNotice({ kind: 'control', title: '통제 지하차도를 피해 경로를 재탐색했어요',
         text: `${blocked} 통제 중 · 우회 경로로 안내합니다${demoIncident.value ? ' (시연 상황)' : ''}` }, true)
+    announce(`${blocked} 통제 중입니다. 우회 경로로 안내합니다.`, true)
     return
   }
   if (!result.advisoryHazards?.length && !result.suggestedDetour) return
@@ -103,6 +106,7 @@ function presentSafety() {
   const extra = result.suggestedDetour
     ? ` · 우회 시 약 ${Math.max(1, Math.ceil(result.suggestedDetour.extraSec / 60))}분 더 걸려요` : ''
   setNotice({ kind: 'risk', title: '전방 지하차도 위험단계가 올랐어요', text: `${hazards}${extra}` })
+  announce(`전방 ${hazards} 위험단계가 올랐습니다. ${result.suggestedDetour ? '우회 경로를 확인해 주세요.' : '주의해서 운전해 주세요.'}`, true)
 }
 function acceptDetour() {
   const running = requested.value
@@ -111,7 +115,7 @@ function acceptDetour() {
   dismissNotice()
   if (detour) chooseRoute(1)
   if (running && !safetyUnavailable.value) startNavigation()
-  if (detour) announce('우회 경로로 안내합니다.')
+  if (detour) announce('우회 경로로 안내합니다.', true)
 }
 function keepRoute() {
   if (safety.value) declinedRiskKey = riskKey(safety.value)
@@ -485,7 +489,7 @@ function stopNavigation(resetArrival = true) {
   requested.value = false
   userOverlay?.setMap(null)
   userOverlay = undefined
-  if (speechSupported && voice.value) stopNavigationSpeech()
+  if (speechSupported) stopNavigationSpeech()
   if (resetArrival) arrived.value = false
 }
 function updateDemoPosition() {
@@ -512,7 +516,7 @@ function toggleDemoPause() {
   cancelAnimationFrame(demoFrame)
   demoLastTime = 0
   if (demoPaused.value) {
-    if (speechSupported && voice.value) stopNavigationSpeech()
+    if (speechSupported) stopNavigationSpeech()
   } else demoFrame = requestAnimationFrame(demoTick)
 }
 function changeDrivingMode() {
@@ -559,7 +563,6 @@ async function simulateClosure() {
   const wasPaused=demoPaused.value
   if(!demoPaused.value)toggleDemoPause()
   busy.value=true;error.value='';gpsError.value=''
-  announce('시연 상황입니다. 전방 통제로 우회 경로를 찾습니다.')
   try {
     let candidate:Route|undefined
     const dx=ahead.lng-from.lng,dy=ahead.lat-from.lat,length=Math.hypot(dx,dy)||1
@@ -580,7 +583,7 @@ async function simulateClosure() {
     routes.value=[candidate];selected.value=0
     demoIncident.value=true
     safety.value={distance:candidate.summary.distance,duration:candidate.summary.duration,path:routePoints(candidate).map(p=>[p.lat,p.lng]),guides:[],mandatory:true,detoured:true,blockedHazards:['전방 시연 구간'],advisoryHazards:[],passesHazards:[],message:'주행 중 통제가 발생한 시연 상황입니다. 실제 시설 통제에는 영향을 주지 않습니다.'}
-    await nextTick();draw();presentSafety();startNavigation();announce('통제 구간을 피해 우회 경로로 안내합니다.')
+    await nextTick();draw();presentSafety();startNavigation()
   } catch(e) {
     gpsError.value=(e as Error).message
     if(!wasPaused&&requested.value&&demoPaused.value)toggleDemoPause()
@@ -713,13 +716,11 @@ async function reroute() {
   }
   try {
     const pending=runSearch()
-    if(running)announce('위험 정보를 반영해 경로를 재탐색합니다.')
     await pending
     if(running&&active.value&&!safetyUnavailable.value){
       startNavigation()
       presentSafety()
-      announce('경로를 재탐색했습니다. 새 경로로 안내합니다.')
-    } else if(running&&safetyUnavailable.value) announce('안전한 우회 경로를 찾지 못했어요. 현장 통제 안내를 따라 주세요.')
+    } else if(running&&safetyUnavailable.value) announce('안전한 우회 경로를 찾지 못했어요. 현장 통제 안내를 따라 주세요.', true)
   } finally {rerouting.value=false;reroutingDriving.value=false}
 }
 // 현재 경로와 관련된 위험 정보만 비교한다. 다른 지하차도가 바뀐 경우에는 값이 같아서 아무 것도 하지 않는다
@@ -1019,7 +1020,7 @@ onBeforeUnmount(() => {
               ><strong>{{remainingMinutes}}<small>분</small></strong
               ><span>{{formatDistance(remainingDistance)}} · {{arrivalTime}} 도착 예상</span></div
             ><div class="navigation-arrival-actions"
-              ><button v-if="requested" type="button" class="navigation-voice" :disabled="!speechSupported" :aria-pressed="voice" @click="voice=!voice"
+              ><button v-if="requested" type="button" class="navigation-voice" :disabled="!speechSupported" :aria-pressed="voice" title="끄더라도 통제·우회 알림은 음성으로 안내해요" @click="voice=!voice"
                 >음성 {{voice?'켬':'끔'}}</button
               ><button v-if="!requested" type="button" class="navigation-start" @click="startNavigation">다시 안내</button
               ><button v-else type="button" class="navigation-stop" @click="stopNavigation()">안내 종료</button></div

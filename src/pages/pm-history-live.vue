@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import AppPagination from '../components/AppPagination.vue'
 import CompactFilters, { type FilterChip } from '../components/CompactFilters.vue'
-import PmActionModal from '../components/PmActionModal.vue'
 import { adminPageTitle } from '../data/adminTitles'
 import { managerAppPath } from '../utils/manager-app-path'
 const appPath = (path: string) => managerAppPath(path, route.path)
@@ -37,7 +36,7 @@ type Action = {
   scoreBefore: number | null
   scoreAfter: number | null
 }
-type Equipment = { equipId: number; name: string; type: string; underpassName: string; openEventId?: number | null }
+type Equipment = { equipId: number; name: string; type: string; underpassName: string }
 
 const PAGE_SIZE = useRoute().path.startsWith('/admin-app/') ? 5 : 20
 const route = useRoute(),
@@ -83,14 +82,6 @@ function setRange(days: number | null) {
 }
 const equipmentOptions = computed(() =>
   equipments.value.filter((e) => !type.value || e.type === type.value).sort((a, b) => a.name.localeCompare(b.name)),
-)
-const modal = ref<InstanceType<typeof PmActionModal>>()
-// 처리 중인 점검이 있거나 노면 설비는 수동 등록 대상에서 뺀다 (서버도 막는다)
-const registerable = computed(() =>
-  equipments.value
-    .filter((e) => e.type !== 'ROAD' && !e.openEventId)
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((e) => ({ equipId: e.equipId, name: e.name, underpassName: e.underpassName })),
 )
 const selectedEquipment = computed(() => equipments.value.find((e) => String(e.equipId) === equipId.value))
 
@@ -198,7 +189,7 @@ function resetFilters() {
           <div class="sub">점검 시작부터 기록 추가·종료까지 확인할 수 있어요.</div>
         </div>
         <div class="pm-head-actions">
-          <button class="btn primary" type="button" @click="modal?.openRegister(registerable)">+ 점검 등록</button>
+          <RouterLink class="btn primary" :to="appPath('/pm-register')">+ 점검 등록</RouterLink>
           <RouterLink class="btn" :to="appPath('/pm-queue')">점검 대기 →</RouterLink>
           <RouterLink class="btn" :to="appPath('/pm-equipment')">{{adminPageTitle('/pm-equipment')}} →</RouterLink>
           <button v-if="!route.path.startsWith('/admin-app/')" class="btn" type="button" :disabled="loading" @click="load">새로고침</button>
@@ -319,7 +310,6 @@ function resetFilters() {
       </div>
       <p class="pm-note">조치 기록은 점검 대기 또는 '점검 등록'으로 남길 수 있어요 · 등록자는 기록한 관리자로 자동 저장돼요 · 점검 뒤 점수는 조치 기록 뒤 처음 들어온 점수예요</p>
     </section>
-    <PmActionModal ref="modal" @done="load();loadEquipments()" />
   </BackendLayout>
 </template>
 <style scoped>

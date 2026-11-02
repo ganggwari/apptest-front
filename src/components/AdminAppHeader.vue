@@ -36,6 +36,8 @@ const section = computed(() => route.path.split('/').at(-1)!.replace('screen-', 
   fallback = computed(() =>
     section.value === 'inspection'
       ? '/admin-app/screen-10?id='+encodeURIComponent(String(route.query.id||''))
+      : section.value === 'pm-register'
+      ? (route.query.id ? '/admin-app/screen-10?id='+encodeURIComponent(String(route.query.id)) : '/admin-app/screen-11')
       : ['10', '11', 'history'].includes(section.value)
       ? '/admin-app/screen-9'
       : section.value === '12'

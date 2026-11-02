@@ -7,6 +7,7 @@ import { appOnlyRedirect } from './services/appOnly'
 const routes = [
   { path: '/admin-app/menu', component: pages['./pages/admin-app-menu.vue'] },
   { path: '/admin-app/inspection', component: pages['./pages/pm-inspection.vue'] },
+  { path: '/admin-app/pm-register', component: pages['./pages/pm-register.vue'] },
   {
     path: '/admin-app/:resource(ocr|reviews|transits|transfers)',
     component: pages['./pages/backend-resource.vue'],

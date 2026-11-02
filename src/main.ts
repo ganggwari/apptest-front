@@ -3,6 +3,7 @@ import { installSessionGuard } from './services/sessionGuard'
 import { installConnStatus } from './runtime/connStatus'
 import { registerPwa } from './runtime/pwa'
 import { installErrorVisibility } from './runtime/errorVisibility'
+import { initResponsive } from './runtime/responsiveMode'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
@@ -47,6 +48,8 @@ import './styles/dark-chart-glow.css'
 import './styles/admin-web-workspace.css'
 import './styles/admin-web-sections.css'
 import './styles/customer-mobile-polish.css'
+import './styles/tablet-responsive.css'
+initResponsive()
 installAuthFetch()
 createApp(App)
   .component('PasswordInput', PasswordInput)

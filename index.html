@@ -11,6 +11,9 @@
     <link rel="apple-touch-icon" href="/icons/customer-ru-180-v1.png" id="app-touch-icon" />
     <title>ROUTEL</title>
     <script>
+      try{document.documentElement.dataset.responsive=localStorage.getItem('routel-responsive')==='off'?'off':'on'}catch(e){document.documentElement.dataset.responsive='on'}
+    </script>
+    <script>
       if(location.pathname.startsWith('/admin-app/')){document.getElementById('app-manifest').href='/admin.webmanifest';document.getElementById('app-touch-icon').href='/icons/admin-ru-180-v1.png';document.querySelector('meta[name=apple-mobile-web-app-title]').content='ROUTEL 관리자'}
     </script>
   </head>
