@@ -23,6 +23,7 @@ import {
   type SafetyRoute,
   safetyRouteCandidate,
   passesAvoidPoint,
+  politeGuidance,
 } from '../services/navigation'
 import { projectRoute, distanceMeters, formatDistance, routeTimeline } from '../utils/navigation-progress'
 import { preloadNavigationSpeech, speakNavigation, spokenDistance, stopNavigationSpeech } from '../utils/navigation-voice'
@@ -137,7 +138,8 @@ const weather = ref<Weather | null>(null),
   camera = ref<Camera | null>(null),
   videoError = ref(false)
 const active = computed(() => routes.value[selected.value]),
-  guides = computed(() => active.value?.sections.flatMap((section) => section.guides || []) || [])
+  guides = computed(() => active.value?.sections.flatMap((section) => section.guides || [])
+    .map((guide) => ({ ...guide, guidance: politeGuidance(guide.guidance) })) || [])
 let sdk: any,
   map: any,
   resize: ResizeObserver | undefined,

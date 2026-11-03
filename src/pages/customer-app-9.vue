@@ -25,7 +25,7 @@ const weather = ref(false)
         <div class="inl-c20b650261">
           <span class="inl-c22576a4c7">↰</span>
           <div>
-            <b class="inl-433de30b36">300m 앞 좌회전</b>
+            <b class="inl-433de30b36">300m 앞 좌회전입니다</b>
             <div class="inl-d06a1531ea">△△로 방면</div>
           </div>
         </div>

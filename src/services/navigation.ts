@@ -15,6 +15,15 @@ export type SafetyRoute = {
   passesHazards: string[]; blockedHazards: string[]; advisoryHazards: string[]
   suggestedDetour?: { distance:number;duration:number;path:[number,number][];guides:SafetyRoute['guides'];message:string;extraSec:number } | null
 }
+// 길안내 API 는 '우회전', '왼쪽 방향'처럼 명사로만 줘서 화면·음성용으로 존댓말을 붙인다
+export function politeGuidance(text = '') {
+  const value = text.trim().replace(/[.\s]+$/, '')
+  if (!value || /(다|요)$/.test(value)) return value
+  if (value === '출발지') return '출발합니다'
+  if (value === '경유지') return '경유지를 지납니다'
+  if (/(진입|진출|통과|합류)$/.test(value)) return value + '합니다'
+  return value + '입니다'
+}
 export function safetyRouteCandidate(route: Pick<SafetyRoute,'distance'|'duration'|'path'|'guides'>): Route {
   return { result_code:0, summary:{distance:route.distance,duration:route.duration}, sections:[{
     roads:[{vertexes:route.path.flatMap(([lat,lng])=>[lng,lat])}],
