@@ -8,6 +8,7 @@ import FeedbackToast from '../components/FeedbackToast.vue'
 import AccountActions from '../components/AccountActions.vue'
 import ManagerPushDevices from '../components/ManagerPushDevices.vue'
 import NavigationVoiceSettings from '../components/NavigationVoiceSettings.vue'
+import ResponsiveSettings from '../components/ResponsiveSettings.vue'
 import profileMascot from '../assets/mascot/routel-ru-transparent.png'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -216,7 +217,8 @@ onBeforeUnmount(() => controller.abort())
           ></component
         ><section v-if="combined" id="account-cars" class="account-panel"
           ><ServiceResource resource-key="cars" embedded /></section
-        ><section v-if="!manager&&(accountSection==='settings'||combined&&!mobileCombined)" class="account-panel"
+        ><ResponsiveSettings v-if="!manager&&accountSection==='settings'"
+        /><section v-if="!manager&&(accountSection==='settings'||combined&&!mobileCombined)" class="account-panel"
           ><h2>비밀번호 변경</h2
           ><form @submit.prevent="password"
             ><label
@@ -242,12 +244,13 @@ onBeforeUnmount(() => controller.abort())
             ><button :disabled="busy" type="submit">계정 탈퇴</button></form
           ></section
         ><NavigationVoiceSettings v-if="mobileCombined"
+        /><ResponsiveSettings v-if="mobileCombined"
         /></template
       ><h2 v-if="managerApp" class="manager-mypage-group-title">업무·이용 안내</h2><nav v-if="managerApp" class="app-more-menu" aria-label="마이페이지 메뉴"
         ><RouterLink to="/admin-app/history"><UiIcon name="document" />점검 이력 <span>›</span></RouterLink
         ><RouterLink to="/admin-app/notifications"><UiIcon name="bell" />알림 내역 <span>›</span></RouterLink
         ><RouterLink to="/admin-app/contacts"><UiIcon name="user" />관할 담당자 연락처 <span>›</span></RouterLink><button type="button" class="manager-guide-launch" @click="openManagerGuide"><UiIcon name="map" />루와 관리자 사용법 보기<span class="account-menu-chevron" aria-hidden="true">›</span></button><details class="manager-mypage-devices"><summary><UiIcon name="bell" />푸시 알림 설정<span>›</span></summary><ManagerPushDevices /></details></nav
-      ><AdminPageDirectory v-else-if="manager" /><ManagerPushDevices v-if="manager&&!managerApp" /><AccountActions v-if="manager" /><button v-if="managerApp" type="button" class="manager-mypage-logout" :disabled="busy" @click="logoutManager"><UiIcon name="logout" />로그아웃</button></section
+      ><AdminPageDirectory v-else-if="manager" /><ResponsiveSettings v-if="managerApp" /><ManagerPushDevices v-if="manager&&!managerApp" /><AccountActions v-if="manager" /><button v-if="managerApp" type="button" class="manager-mypage-logout" :disabled="busy" @click="logoutManager"><UiIcon name="logout" />로그아웃</button></section
   ></component>
 </template>
 <style scoped src="../styles/pages/service-account.css"></style>

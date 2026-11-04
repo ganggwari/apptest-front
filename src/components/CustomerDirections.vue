@@ -23,6 +23,7 @@ import {
   type SafetyRoute,
   safetyRouteCandidate,
   passesAvoidPoint,
+  politeGuidance,
 } from '../services/navigation'
 import { projectRoute, distanceMeters, formatDistance, routeTimeline } from '../utils/navigation-progress'
 import { preloadNavigationSpeech, speakNavigation, spokenDistance, stopNavigationSpeech } from '../utils/navigation-voice'
@@ -50,8 +51,10 @@ const rerouting=ref(false)
 const demoIncident=ref(false)
 const reroutingDriving=ref(false)
 let hazardTimer: ReturnType<typeof setTimeout>|undefined, prioritySpeechUntil = 0
-function announce(message:string) {
-  if (!speechSupported||!voice.value) return
+// force=true: 통제·우회 알림처럼 꼭 들려야 하는 안내. 음성 안내를 꺼 두어도 읽어 준다.
+// 경로 재탐색을 시작·마칠 때는 따로 소리를 내지 않는다.
+function announce(message:string, force=false) {
+  if (!speechSupported||(!voice.value&&!force)) return
   prioritySpeechUntil=Date.now()+4000
   void speakNavigation(message)
 }
@@ -95,6 +98,7 @@ function presentSafety() {
     if (result.detoured)
       setNotice({ kind: 'control', title: '통제 지하차도를 피해 경로를 재탐색했어요',
         text: `${blocked} 통제 중 · 우회 경로로 안내합니다${demoIncident.value ? ' (시연 상황)' : ''}` }, true)
+    announce(`${blocked} 통제 중입니다. 우회 경로로 안내합니다.`, true)
     return
   }
   if (!result.advisoryHazards?.length && !result.suggestedDetour) return
@@ -103,6 +107,7 @@ function presentSafety() {
   const extra = result.suggestedDetour
     ? ` · 우회 시 약 ${Math.max(1, Math.ceil(result.suggestedDetour.extraSec / 60))}분 더 걸려요` : ''
   setNotice({ kind: 'risk', title: '전방 지하차도 위험단계가 올랐어요', text: `${hazards}${extra}` })
+  announce(`전방 ${hazards} 위험단계가 올랐습니다. ${result.suggestedDetour ? '우회 경로를 확인해 주세요.' : '주의해서 운전해 주세요.'}`, true)
 }
 function acceptDetour() {
   const running = requested.value
@@ -133,7 +138,8 @@ const weather = ref<Weather | null>(null),
   camera = ref<Camera | null>(null),
   videoError = ref(false)
 const active = computed(() => routes.value[selected.value]),
-  guides = computed(() => active.value?.sections.flatMap((section) => section.guides || []) || [])
+  guides = computed(() => active.value?.sections.flatMap((section) => section.guides || [])
+    .map((guide) => ({ ...guide, guidance: politeGuidance(guide.guidance) })) || [])
 let sdk: any,
   map: any,
   resize: ResizeObserver | undefined,
@@ -485,7 +491,7 @@ function stopNavigation(resetArrival = true) {
   requested.value = false
   userOverlay?.setMap(null)
   userOverlay = undefined
-  if (speechSupported && voice.value) stopNavigationSpeech()
+  if (speechSupported) stopNavigationSpeech()
   if (resetArrival) arrived.value = false
 }
 function updateDemoPosition() {
@@ -512,7 +518,7 @@ function toggleDemoPause() {
   cancelAnimationFrame(demoFrame)
   demoLastTime = 0
   if (demoPaused.value) {
-    if (speechSupported && voice.value) stopNavigationSpeech()
+    if (speechSupported) stopNavigationSpeech()
   } else demoFrame = requestAnimationFrame(demoTick)
 }
 function changeDrivingMode() {
@@ -1017,7 +1023,7 @@ onBeforeUnmount(() => {
               ><strong>{{remainingMinutes}}<small>분</small></strong
               ><span>{{formatDistance(remainingDistance)}} · {{arrivalTime}} 도착 예상</span></div
             ><div class="navigation-arrival-actions"
-              ><button v-if="requested" type="button" class="navigation-voice" :disabled="!speechSupported" :aria-pressed="voice" @click="voice=!voice"
+              ><button v-if="requested" type="button" class="navigation-voice" :disabled="!speechSupported" :aria-pressed="voice" title="끄더라도 통제·우회 알림은 음성으로 안내해요" @click="voice=!voice"
                 >음성 {{voice?'켬':'끔'}}</button
               ><button v-if="!requested" type="button" class="navigation-start" @click="startNavigation">다시 안내</button
               ><button v-else type="button" class="navigation-stop" @click="stopNavigation()">안내 종료</button></div

@@ -149,9 +149,10 @@ function act(row: PmEvent, mode: 'start' | 'note' | 'resolve') {
       <div class="page-head service-heading">
         <div>
           <h1><AdminPageIcon />{{adminPageTitle('/pm-queue')}}</h1>
-          <div class="sub">위험진입 · 급상승 · 미수신으로 생긴 점검 대상</div>
+          <div class="sub">위험진입 · 급상승 · 미수신 · 수동 등록으로 생긴 점검 대상</div>
         </div>
         <div class="pm-head-actions">
+          <RouterLink class="btn primary" :to="appPath('/pm-register')">+ 점검 등록</RouterLink>
           <RouterLink class="btn" :to="appPath('/pm-equipment')">{{adminPageTitle('/pm-equipment')}} →</RouterLink>
           <RouterLink class="btn" :to="appPath('/pm-history')">점검 이력 →</RouterLink>
           <button v-if="!route.path.startsWith('/admin-app/')" class="btn" type="button" :disabled="loading" @click="load">새로고침</button>

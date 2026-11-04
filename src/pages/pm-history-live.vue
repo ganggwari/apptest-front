@@ -7,7 +7,7 @@ const appPath = (path: string) => managerAppPath(path, route.path)
 // 예지보전 점검 이력 (/pm-history). 예전 목업(pm-history.vue + data/pm-history.json)을 대신한다.
 //  GET /api/pm/actions?startDate=&endDate=&type=&equipId=   조치 기록 최근 순 (기간은 조치 기록일 기준, endDate 당일 포함)
 //  GET /api/pm/equipments?size=100                          설비 고르기 목록
-// 조치 기록은 점검 대기(이벤트)에만 붙는다. 이벤트 없이 "직접 등록"하는 API 는 없어서 등록 버튼은 두지 않는다.
+// 조치 기록은 점검 대기(이벤트)에 붙는다. "+ 점검 등록" 은 POST /api/pm/events 로 점검 대기(수동등록)를 만들면서 첫 기록을 남긴다.
 // 설비 상세의 "점검 이력 전체 →" 는 ?equipId= 로 들어온다.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -189,6 +189,7 @@ function resetFilters() {
           <div class="sub">점검 시작부터 기록 추가·종료까지 확인할 수 있어요.</div>
         </div>
         <div class="pm-head-actions">
+          <RouterLink class="btn primary" :to="appPath('/pm-register')">+ 점검 등록</RouterLink>
           <RouterLink class="btn" :to="appPath('/pm-queue')">점검 대기 →</RouterLink>
           <RouterLink class="btn" :to="appPath('/pm-equipment')">{{adminPageTitle('/pm-equipment')}} →</RouterLink>
           <button v-if="!route.path.startsWith('/admin-app/')" class="btn" type="button" :disabled="loading" @click="load">새로고침</button>
@@ -307,7 +308,7 @@ function resetFilters() {
         <span>{{page}} / {{Math.max(1,list?.totalPages||1)}} · 전체 {{list?.totalItems??0}}건</span>
         <button class="btn sm" type="button" :disabled="loading||page>=Math.max(1,list?.totalPages||1)" @click="page++">다음</button>
       </div>
-      <p class="pm-note">조치 기록은 점검 대기에서만 남길 수 있어요 · 등록자는 기록한 관리자로 자동 저장돼요 · 점검 뒤 점수는 조치 기록 뒤 처음 들어온 점수예요</p>
+      <p class="pm-note">조치 기록은 점검 대기 또는 '점검 등록'으로 남길 수 있어요 · 등록자는 기록한 관리자로 자동 저장돼요 · 점검 뒤 점수는 조치 기록 뒤 처음 들어온 점수예요</p>
     </section>
   </BackendLayout>
 </template>

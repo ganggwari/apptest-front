@@ -1,0 +1,39 @@
+/* 태블릿(패드) 반응형. 설정(마이페이지)의 "태블릿·넓은 화면 맞춤"이 켜져 있을 때만(<html data-responsive="on">) 적용된다.
+   끄면 이 파일은 아무 것도 바꾸지 않아 예전 휴대폰 폭(430px) 모양 그대로다.
+   - 600px 이상: 앱 프레임이 430px 에 갇히지 않고 화면 폭을 쓴다(최대 --tablet-max). 본문은 읽기 좋은 폭으로 가운데에 둔다.
+   - 900px 이상(패드 가로): 프레임 최대 폭을 넓히고 카드 목록을 2열로 나눈다. */
+:root[data-responsive='on'] { --tablet-max: 960px; --tablet-gutter: 24px; }
+
+@media (min-width: 600px) {
+  /* 프레임 폭: 430px 제한 해제 */
+  :root[data-responsive='on'] #app :is(.service-mobile, .manager-app-shell, .customer-app-editorial) {
+    width: min(var(--tablet-max), 100%);
+    max-width: var(--tablet-max);
+  }
+  :root[data-responsive='on'] .wire-page.mobile-page[class] { max-width: var(--tablet-max); }
+  :root[data-responsive='on'] .service-mobile > .customer-app-nav { max-width: var(--tablet-max); }
+
+  /* 본문 좌우 여백을 넉넉하게 */
+  :root[data-responsive='on'] #app :is(.service-mobile, .manager-app-shell, .customer-app-editorial) :is(.app-restored-body, :where(.mobile-page > .ph > .bd)) {
+    padding-inline: max(var(--tablet-gutter), env(safe-area-inset-left));
+  }
+  :root[data-responsive='on'] #app :is(.service-mobile, .manager-app-shell, .customer-app-editorial) :where(.mobile-page > .ph > .ah) {
+    padding-inline: var(--tablet-gutter);
+  }
+
+  /* 지도 화면은 가장자리까지 채운다(여백을 주지 않는다) */
+  :root[data-responsive='on'] #app :is(.service-mobile, .manager-app-shell, .customer-app-editorial) :is(.app-map-screen, .app-manager-overview) > .app-restored-body,
+  :root[data-responsive='on'] #app .wire-page.mobile-page > .ph > .bd.map-stage { padding-inline: 0; }
+
+  /* 로그인·가입 같은 단일 폼은 카드를 가운데에 */
+  :root[data-responsive='on'] #app .service-app-layout.app-auth .auth-service:has(.login-form) { max-width: 440px; }
+
+  /* 가로 방향 글자·터치 대상은 그대로 두고, 한 줄이 너무 길어지는 문단만 제한 */
+  :root[data-responsive='on'] #app :is(.service-mobile, .manager-app-shell, .customer-app-editorial) :is(.account-panel, .service-detail) p {
+    max-width: 68ch;
+  }
+}
+
+@media (min-width: 900px) {
+  :root[data-responsive='on'] { --tablet-max: 1120px; --tablet-gutter: 32px; }
+}

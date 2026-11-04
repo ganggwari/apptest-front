@@ -61,6 +61,8 @@ export const useCustomerNotifications = defineStore('customer-notifications', ()
     appArrivals.value = []
   }
   function dismissAppArrivals() { appArrivals.value = [] }
+  // 화면에서만 내림 (읽음 처리 안 함 -> 알림함에는 그대로 남음)
+  function dismissAppArrival(id: number) { appArrivals.value = appArrivals.value.filter(item => item.id !== id) }
   let eventRevision = 0
   let owner = '',
     seen = new Set<number>(),
@@ -232,6 +234,7 @@ export const useCustomerNotifications = defineStore('customer-notifications', ()
     appArrivals,
     setAppAlertsEnabled,
     dismissAppArrivals,
+    dismissAppArrival,
     reset,
     setBrowserEnabled,
     refresh,
