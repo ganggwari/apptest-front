@@ -91,6 +91,13 @@
       <b>주의</b> 단계에서는 원래 경로를 안내하되 "우회 제안" 경로를 함께 보여줍니다. 고객 계정(customer01)으로 로그인한 상태여야 합니다.</p>
   </section>
 
+  <section>
+    <h2>⑥ 시연 시작 상태로 초기화 — 관리자 로그인 필요</h2>
+    <p class="muted">DB를 통째로 지우고 시드(1~6번)를 다시 넣어 <b>시연 처음 상태</b>로 되돌립니다 (초량 수동 통제 · 위험 설비 5종 점검 대기 · 이력 포함). 10초 안팎 걸리고,
+      끝나면 <b>앱·웹 화면을 새로고침</b>하세요. 지금까지 만든 통제·알림·점검 기록은 모두 사라집니다.</p>
+    <button id="resetState" class="red">시연 시작 상태로 초기화</button>
+  </section>
+
   <section><h2>응답</h2><pre id="out">-</pre></section>
 </main>
 <script>
@@ -150,6 +157,13 @@ document.addEventListener('click', async (e) => {
     await loadLevels(true)
   }
 })
+$('resetState').onclick = async () => {
+  if (!confirm('DB를 시연 시작 상태로 되돌립니다. 지금까지의 데이터는 모두 사라집니다. 계속할까요?')) return
+  const b = $('resetState'); b.disabled = true; show('초기화 중… (10초 안팎)')
+  const j = await api('POST', '/api/demo/reset')
+  b.disabled = false
+  if (j && j.success !== false) { show('초기화 완료. 앱·웹 화면을 새로고침하세요.\n' + JSON.stringify(j.data ?? j, null, 2)); loadLevels(true) }
+}
 $('releaseAll').onclick = async () => { const j = await api('DELETE', '/api/demo/levels', {}); if (j && j.data) { rows = j.data; render() } }
 function fire(cameraId) { api('POST', '/api/demo/plate/fire', { cameraId, loginId: $('login').value.trim() || 'customer01', carNum: $('car').value || null }) }
 $('fireCam').onclick = () => fire(Number($('cam').value))

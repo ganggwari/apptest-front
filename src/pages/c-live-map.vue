@@ -126,7 +126,8 @@ const sheetCoversMap = computed(
 // 고객과 관리자에서 조회하는 공개 시설 목록입니다.
 
 const app = useApp()
-const STALE_AFTER_MS = 120000
+// 마커가 "갱신 지연"(회색)이 되는 기준. 평상시 데이터가 지하차도마다 약 1분에 한 번 오고, Render 소형 서버는 가끔 늦으므로 5분으로 넉넉하게 둔다.
+const STALE_AFTER_MS = 300000
 // 백엔드(back/final) UnderpassController 기준. 목록 항목에 현재 상태(currentStatus/currentRiskLevel)가 함께 옵니다.
 const API = {
   underpasses: '/api/underpasses',
