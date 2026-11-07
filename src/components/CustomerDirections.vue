@@ -378,7 +378,7 @@ const requested = ref(false),
   gpsError = ref('')
 // 시연 주행(가상 위치)이 기본이다. 실제 GPS 는 주행 방식에서 직접 고를 때만 쓴다
 const drivingMode = ref<'gps' | 'demo'>('demo'),
-  demoSpeed = ref(4),
+  demoSpeed = ref(2),
   demoPaused = ref(false),
   demoMeters = ref(0)
 let demoFrame = 0, demoLastTime = 0
@@ -533,27 +533,6 @@ function changeDrivingMode() {
 function previewRoute() {
   drivingMode.value = 'demo'
   startNavigation()
-}
-// 시연용 고정 경로(초량·북항·충장 지하차도를 지나는 출발/도착). 버튼 한 번으로 출발지·도착지를 넣고 시연 주행을 시작한다.
-const DEMO_TRIPS: { label: string; short: string; from: Place; to: Place }[] = [
-  { label: '초량지하차도 경로', short: '초량', from: { name: '시연 출발(초량 북쪽)', lat: 35.1291, lng: 129.0452 }, to: { name: '시연 도착(초량 남쪽)', lat: 35.1091, lng: 129.0444 } },
-  { label: '북항지하차도 경로', short: '북항', from: { name: '시연 출발(북항 북쪽)', lat: 35.1331, lng: 129.0475 }, to: { name: '시연 도착(북항 남쪽)', lat: 35.1131, lng: 129.0467 } },
-  { label: '충장지하차도 경로', short: '충장', from: { name: '시연 출발(범일동)', lat: 35.138, lng: 129.064 }, to: { name: '시연 도착(남포동 방면)', lat: 35.104, lng: 129.038 } },
-]
-async function useDemoTrip(i: number) {
-  if (busy.value) return
-  const t = DEMO_TRIPS[i]!
-  origin.value = t.from
-  originText.value = t.from.name
-  destination.value = t.to
-  destinationText.value = t.to.name
-  await startDemoTrip()
-}
-async function startDemoTrip() {
-  if(busy.value)return
-  drivingMode.value='demo'
-  await search()
-  if(active.value&&!safetyUnavailable.value)startNavigation()
 }
 async function simulateClosure() {
   if(drivingMode.value!=='demo'||!requested.value||!position.value||!destination.value||busy.value)return
@@ -921,10 +900,7 @@ onBeforeUnmount(() => {
                   >검색</button
                 ></div
               ></label
-            ><button class="btn p" :disabled="busy">{{busy?'경로 조회 중…':'길찾기'}}</button><div class="navigation-demo-routes"
-              ><button v-for="(t,i) in DEMO_TRIPS" :key="t.label" type="button" :disabled="busy" @click="useDemoTrip(i)">{{t.short}}</button
-              ></div
-            ></form
+            ><button class="btn p" :disabled="busy">{{busy?'경로 조회 중…':'길찾기'}}</button></form
           ><ul v-if="choices.length" class="directions-place-results"
             ><li v-for="place in choices" :key="place.id"
               ><button @click="pickPlace(place)"

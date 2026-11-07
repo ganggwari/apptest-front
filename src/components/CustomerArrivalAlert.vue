@@ -5,7 +5,7 @@ import { useApp } from '../stores/app'
 import { notificationCategory, useCustomerNotifications } from '../stores/customerNotifications'
 import { displayDate } from '../utils/display-date'
 import UiIcon from './UiIcon.vue'
-import { playCustomerEmergencyAlert } from '../runtime/customerAlertSound'
+import { CUSTOMER_ALERT_MS, playCustomerEmergencyAlert } from '../runtime/customerAlertSound'
 
 const app = useApp(), route = useRoute()
 const notifications = useCustomerNotifications()
@@ -31,7 +31,7 @@ const label = computed(() => isSafety.value
   : notificationCategory(current.value?.category || ''))
 // 안전 알림(재난문자)은 운전에 방해되지 않게 화면 위 배너로 잠깐 띄웠다가 자동으로 내림.
 // 배너를 누르면 지금까지처럼 가운데 상세 창, 위로 밀면 바로 내림. 내려도 읽음 처리는 안 해서 알림함에 남음
-const BANNER_MS = 3000, LEAVE_MS = 280
+const BANNER_MS = CUSTOMER_ALERT_MS, LEAVE_MS = 280
 const expanded = ref(false), leaving = ref(false)
 const banner = computed(() => isSafety.value && !expanded.value)
 let interval: ReturnType<typeof setInterval> | undefined

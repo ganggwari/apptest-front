@@ -1,5 +1,7 @@
 // 고객 앱 긴급재난문자(접근 알림·진입 직전 알림) 사운드. 파일 없이 Web Audio 로 만든다.
 // 재난문자처럼 높낮이가 번갈아 울리는 경보음 + 강한 진동. 브라우저는 사용자가 화면을 한 번이라도 누른 뒤에야 소리를 허용한다.
+/** 접근·진입 직전 알림 팝업(배너)이 떠 있는 시간. 경보음과 진동도 이 시간에 맞춰 끝난다 */
+export const CUSTOMER_ALERT_MS = 3000
 let ctx: AudioContext | undefined
 let lastKey = ''
 let lastTime = 0
@@ -18,18 +20,18 @@ export function playCustomerEmergencyAlert(id: unknown, danger = true) {
   if (key ? key === lastKey && now - lastTime < 15000 : now - lastTime < 1500) return
   lastKey = key
   lastTime = now
-  if ('vibrate' in navigator) navigator.vibrate(danger ? [500, 150, 500, 150, 500, 150, 900] : [400, 150, 400, 150, 700])
+  if ('vibrate' in navigator) navigator.vibrate(danger ? [500, 150, 500, 150, 500, 150, 1050] : [400, 150, 400, 150, 700])
   try {
     if (!ctx || ctx.state !== 'running') return
     const c = ctx
-    const start = c.currentTime + 0.05
-    const cycles = danger ? 6 : 4          // 높은음/낮은음 한 쌍 = 1회(약 0.9초)
+    const start = c.currentTime + 0.02
+    const cycles = danger ? 3 : 2          // 높은음/낮은음 한 쌍 = 1회(1초). 위험 3회 = CUSTOMER_ALERT_MS
     const master = c.createGain()
     master.gain.value = 0.9
     master.connect(c.destination)
     for (let i = 0; i < cycles; i++) {
-      ;[[1046, 0], [740, 0.45]].forEach(([freq, offset]) => {
-        const t = start + i * 0.9 + offset
+      ;[[1046, 0], [740, 0.5]].forEach(([freq, offset]) => {
+        const t = start + i * 1.0 + offset
         const osc = c.createOscillator(), gain = c.createGain()
         osc.type = 'square'
         osc.frequency.setValueAtTime(freq, t)
